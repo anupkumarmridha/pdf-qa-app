@@ -44,11 +44,12 @@ class AzureSearchService:
         )
         
         # Initialize embedding model
+        # Initialize embedding model
         self.embeddings = AzureOpenAIEmbeddings(
             azure_deployment=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
             api_key=settings.AZURE_OPENAI_API_KEY,
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
+            api_version=settings.AZURE_OPENAI_EMBEDDING_API_VERSION,
         )
         
         # Ensure the index exists
