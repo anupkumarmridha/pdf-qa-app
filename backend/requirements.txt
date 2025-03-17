@@ -1,0 +1,26 @@
+# FastAPI and server dependencies
+fastapi
+uvicorn
+python-multipart
+pydantic
+pydantic-settings
+python-dotenv
+
+# Azure AI Search
+azure-search-documents
+azure-identity
+azure-core
+
+# LangChain
+langchain
+langchain-community
+langchain-openai
+openai
+
+# Document processing
+PyPDF2
+pandas
+numpy
+
+# Logging and utilities
+logging
