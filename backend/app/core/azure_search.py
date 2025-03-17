@@ -16,7 +16,7 @@ from azure.search.documents.indexes.models import (
     VectorSearchAlgorithmConfiguration,
     HnswParameters,
 )
-from langchain_community.vectorstores.azure_search import AzureSearch
+from langchain_community.vectorstores import AzureSearch
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_core.documents import Document
 
