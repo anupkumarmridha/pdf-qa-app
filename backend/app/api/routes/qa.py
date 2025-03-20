@@ -52,7 +52,7 @@ async def ask_document_question(document_id: str, question: str):
         
         # Get answer from QA service
         answer, sources = qa_service.answer_question(question)
-        
+        print(answer)
         # Filter sources to only include those from this document
         # (This is a workaround - in a real app, you'd filter at the retrieval stage)
         filtered_sources = [
