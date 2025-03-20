@@ -1,52 +1,70 @@
 import json
 import logging
 from typing import List, Dict, Any, Optional
-import requests
-from app.config import settings
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
     SearchIndex,
-    SearchField,
-    SearchFieldDataType,
     SimpleField,
     SearchableField,
+    SearchFieldDataType,
     VectorSearch,
     VectorSearchAlgorithmConfiguration,
     HnswParameters,
-    SemanticConfiguration,
-    SemanticField,
-    SemanticSettings,
-    VectorSearchProfile,
 )
-from langchain_community.vectorstores.azure_search import AzureSearch
+from langchain_community.vectorstores import AzureSearch
 from langchain_openai import AzureOpenAIEmbeddings
-from langchain_core.documents import Document
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+class SchemaConfig:
+    """Configuration class for defining the search index schema"""
+    def __init__(
+        self,
+        id_field: str = "id",
+        content_field: str = "content",
+        content_vector_field: str = "content_vector",
+        metadata_field: str = "metadata",
+        vector_dimensions: int = 3072,
+        vector_search_profile_name: str = "vector-config",
+        hnsw_parameters: Optional[HnswParameters] = None
+    ):
+        self.id_field = id_field
+        self.content_field = content_field
+        self.content_vector_field = content_vector_field
+        self.metadata_field = metadata_field
+        self.vector_dimensions = vector_dimensions
+        self.vector_search_profile_name = vector_search_profile_name
+        self.hnsw_parameters = hnsw_parameters or HnswParameters(
+            m=4,
+            ef_construction=400,
+            ef_search=500,
+            metric="cosine"
+        )
+
 class AzureSearchService:
-    """Service for interacting with Azure AI Search."""
-    
-    def __init__(self):
-        """Initialize the Azure Search service with config from settings."""
+    """
+    Service for interacting with Azure AI Search with configurable schema.
+    """
+    def __init__(self, schema_config: Optional[SchemaConfig] = None):
+        self.schema_config = schema_config or SchemaConfig()
         self.service_endpoint = f"https://{settings.AZURE_SEARCH_SERVICE}.search.windows.net"
         self.index_name = settings.AZURE_SEARCH_INDEX_NAME
         self.credential = AzureKeyCredential(settings.AZURE_SEARCH_KEY)
-        
+
         # Initialize clients
         self.index_client = SearchIndexClient(
             endpoint=self.service_endpoint,
             credential=self.credential
         )
-        
         self.search_client = SearchClient(
             endpoint=self.service_endpoint,
             index_name=self.index_name,
             credential=self.credential
         )
-        
+
         # Initialize embedding model
         self.embeddings = AzureOpenAIEmbeddings(
             azure_deployment=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
@@ -54,160 +72,150 @@ class AzureSearchService:
             azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
             api_version=settings.AZURE_OPENAI_EMBEDDING_API_VERSION,
         )
-        
-        # Ensure the index exists
+
         self._ensure_index_exists()
-    
-    def _ensure_index_exists(self) -> None:
-        """
-        Check if the search index exists and create it if it doesn't.
-        """
-        try:
-            # Check if index exists
-            if self.index_name not in [index.name for index in self.index_client.list_indexes()]:
-                logger.info(f"Creating index: {self.index_name}")
-                
-                # Create index definition with updated schema for newer API versions
-                index = SearchIndex(
-                    name=self.index_name,
-                    fields=[
-                        SimpleField(name="id", type=SearchFieldDataType.String, key=True),
-                        SearchableField(name="content", type=SearchFieldDataType.String),  # Changed from 'text' to 'content'
-                        SimpleField(name="embedding", type=SearchFieldDataType.Collection(SearchFieldDataType.Single), 
-                                    vector_search_dimensions=1536, vector_search_profile_name="vector-config"),
-                        SimpleField(name="metadata_str", type=SearchFieldDataType.String),  # Changed from 'metadata' to 'metadata_str'
-                    ],
-                    vector_search=VectorSearch(
-                        algorithms=[
-                            VectorSearchAlgorithmConfiguration(
-                                name="vector-config",
-                                kind="hnsw",
-                                hnsw_parameters=HnswParameters(
-                                    m=4,
-                                    ef_construction=400,
-                                    ef_search=500,
-                                    metric="cosine"
-                                )
-                            )
-                        ],
-                        profiles=[
-                            VectorSearchProfile(
-                                name="vector-config",
-                                algorithm_configuration_name="vector-config"
-                            )
-                        ]
+
+    def _get_index_definition(self) -> SearchIndex:
+        """Create SearchIndex definition based on schema configuration"""
+        return SearchIndex(
+            name=self.index_name,
+            fields=[
+                SimpleField(
+                    name=self.schema_config.id_field,
+                    type=SearchFieldDataType.String,
+                    key=True
+                ),
+                SearchableField(
+                    name=self.schema_config.content_field,
+                    type=SearchFieldDataType.String
+                ),
+                SimpleField(
+                    name=self.schema_config.content_vector_field,
+                    type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                    vector_search_dimensions=self.schema_config.vector_dimensions,
+                    vector_search_profile_name=self.schema_config.vector_search_profile_name
+                ),
+                SimpleField(
+                    name=self.schema_config.metadata_field,
+                    type=SearchFieldDataType.String
+                ),
+            ],
+            vector_search=VectorSearch(
+                algorithms=[
+                    VectorSearchAlgorithmConfiguration(
+                        name=self.schema_config.vector_search_profile_name,
+                        kind="hnsw",
+                        hnsw_parameters=self.schema_config.hnsw_parameters
                     )
-                )
-                
-                # Create the index
+                ]
+            )
+        )
+
+    def _ensure_index_exists(self) -> None:
+        """Create index if it doesn't exist"""
+        try:
+            existing_indexes = [index.name for index in self.index_client.list_indexes()]
+            if self.index_name not in existing_indexes:
+                logger.info(f"Creating index: {self.index_name}")
+                index = self._get_index_definition()
                 self.index_client.create_index(index)
                 logger.info(f"Created index: {self.index_name}")
             else:
                 logger.info(f"Index already exists: {self.index_name}")
-                
         except Exception as e:
             logger.error(f"Error ensuring index exists: {str(e)}")
             raise
-    
+
     def upload_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """
-        Upload document chunks to Azure AI Search.
-        
-        Args:
-            chunks: List of dictionaries containing document chunks with text and metadata
+        Upload document chunks with schema-aware mapping.
+        Chunks should contain keys matching schema_config fields.
         """
         try:
-            # Convert chunks to the format expected by Azure Search
             documents = []
-            
             for chunk in chunks:
-                # Generate embeddings for the chunk text
-                embedding = self.embeddings.embed_query(chunk["text"])
+                # Get content from either 'text' or the configured content field
+                if 'text' in chunk:
+                    content = chunk['text']
+                elif self.schema_config.content_field in chunk:
+                    content = chunk[self.schema_config.content_field]
+                else:
+                    logger.warning(f"Chunk missing required content field: {chunk}")
+                    continue
+                    
+                # Generate embedding using the content field
+                embedding = self.embeddings.embed_query(content)
                 
-                # Create document with updated field names for newer API version
+                # Get ID from either 'id' or the configured id field
+                chunk_id = chunk.get('id', chunk.get(self.schema_config.id_field))
+                if not chunk_id:
+                    logger.warning(f"Chunk missing required ID field: {chunk}")
+                    continue
+                
                 document = {
-                    "id": chunk["id"],
-                    "content": chunk["text"],  # Changed from 'text' to 'content'
-                    "embedding": embedding,
-                    "metadata_str": json.dumps(chunk["metadata"])  # Changed from 'metadata' to 'metadata_str'
+                    self.schema_config.id_field: chunk_id,
+                    self.schema_config.content_field: content,
+                    self.schema_config.content_vector_field: embedding,
+                    self.schema_config.metadata_field: json.dumps(
+                        chunk.get('metadata', chunk.get(self.schema_config.metadata_field, {}))
+                    )
                 }
-                
                 documents.append(document)
-            
-            # Upload documents in batches of 100 (Azure Search limit)
-            for i in range(0, len(documents), 100):
-                batch = documents[i:i+100]
-                self.search_client.upload_documents(batch)
-                
-            logger.info(f"Uploaded {len(documents)} chunks to Azure AI Search")
-            
+
+            # Batch upload documents
+            if documents:
+                for i in range(0, len(documents), 100):
+                    batch = documents[i:i+100]
+                    self.search_client.upload_documents(documents=batch)
+                logger.info(f"Uploaded {len(documents)} chunks")
+            else:
+                logger.warning("No valid documents to upload")
         except Exception as e:
-            logger.error(f"Error uploading chunks to Azure AI Search: {str(e)}")
+            logger.error(f"Error uploading chunks: {str(e)}")
+            # Re-raise for higher level error handling if needed
             raise
-    
-    def search_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """
-        Search for documents based on the provided query.
         
-        Args:
-            query: The query string
-            top_k: Number of top results to return
-            
-        Returns:
-            List of search results with text and metadata
-        """
+    def search_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Perform vector search using configured schema"""
         try:
-            # Generate embedding for the query
             query_embedding = self.embeddings.embed_query(query)
-            
-            # Perform vector search
             results = self.search_client.search(
                 search_text=None,
                 vector=query_embedding,
-                top_k=top_k,
-                vector_fields="embedding",
-                select=["id", "content", "metadata_str"]  # Updated field names
+                top=top_k,
+                vector_fields=self.schema_config.content_vector_field,
+                select=[
+                    self.schema_config.id_field,
+                    self.schema_config.content_field,
+                    self.schema_config.metadata_field
+                ]
             )
-            
-            # Process results
-            processed_results = []
-            for result in results:
-                processed_results.append({
-                    "id": result["id"],
-                    "text": result["content"],  # Map 'content' back to 'text' for compatibility
-                    "metadata": json.loads(result["metadata_str"]),  # Map 'metadata_str' back to 'metadata'
-                    "score": result["@search.score"]
-                })
-            
-            return processed_results
-            
+
+            return [{
+                "id": result[self.schema_config.id_field],
+                "content": result[self.schema_config.content_field],
+                "metadata": json.loads(result[self.schema_config.metadata_field]),
+                "score": result["@search.score"]
+            } for result in results]
         except Exception as e:
-            logger.error(f"Error searching documents: {str(e)}")
+            logger.error(f"Search error: {str(e)}")
             raise
-    
+        
+        
     def create_langchain_retriever(self, top_k: int = 5):
-        """
-        Create a LangChain retriever backed by Azure AI Search.
-        
-        Args:
-            top_k: Number of documents to retrieve
-            
-        Returns:
-            LangChain retriever object
-        """
-        # Define field mappings for the updated schema
-        field_mapping = {
-            "content": "page_content",  # Map LangChain's 'page_content' to index's 'content'
-            "metadata_str": "metadata"   # Map LangChain's 'metadata' to index's 'metadata_str'
-        }
-        
+        """Create LangChain retriever with schema-aware configuration"""
         vector_store = AzureSearch(
             azure_search_endpoint=self.service_endpoint,
             azure_search_key=settings.AZURE_SEARCH_KEY,
             index_name=self.index_name,
             embedding_function=self.embeddings.embed_query,
+            content_field=self.schema_config.content_field,
+            vector_field=self.schema_config.content_vector_field,
+            metadata_field=self.schema_config.metadata_field,
             search_type="similarity",
-            fields_mapping=field_mapping  # Add field mappings for compatibility
+            # Don't set a default k here, let it be controlled by search_kwargs
         )
-        
-        return vector_store.as_retriever(search_kwargs={"k": top_k})
+        return vector_store.as_retriever()  # Removed search_kwargs here
+
+    
+    
