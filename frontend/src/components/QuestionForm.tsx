@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { FiSend, FiLoader, FiHelpCircle, FiMessageSquare } from 'react-icons/fi';
+import { FiSend, FiHelpCircle, FiMessageSquare } from 'react-icons/fi';
 
-const QuestionForm = ({ onSubmit, documentId = null, isLoading = false }) => {
+interface QuestionFormProps {
+  onSubmit: (question: string) => void;
+  documentId?: string | null;
+  isLoading?: boolean;
+}
+
+const QuestionForm: React.FC<QuestionFormProps> = ({ onSubmit, documentId = null, isLoading = false }) => {
   const [question, setQuestion] = useState('');
   const [error, setError] = useState('');
   const [charCount, setCharCount] = useState(0);
@@ -11,7 +17,7 @@ const QuestionForm = ({ onSubmit, documentId = null, isLoading = false }) => {
     setCharCount(question.length);
   }, [question]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: { preventDefault: () => void; }) => {
     e.preventDefault();
 
     if (!question.trim()) {
@@ -23,7 +29,7 @@ const QuestionForm = ({ onSubmit, documentId = null, isLoading = false }) => {
     onSubmit(question);
   };
 
-  const handleChange = (e) => {
+  const handleChange = (e: { target: { value: React.SetStateAction<string>; }; }) => {
     setQuestion(e.target.value);
     if (error) setError('');
   };
@@ -39,7 +45,7 @@ const QuestionForm = ({ onSubmit, documentId = null, isLoading = false }) => {
     "What methodology was used?"
   ];
 
-  const handleExampleClick = (exampleQuestion) => {
+  const handleExampleClick = (exampleQuestion:string) => {
     setQuestion(exampleQuestion);
     setError('');
   };
@@ -67,7 +73,7 @@ const QuestionForm = ({ onSubmit, documentId = null, isLoading = false }) => {
               <textarea
                 id="question"
                 name="question"
-                rows="4"
+                rows={4}
                 className={`w-full px-4 py-3 rounded-lg border ${error ? 'border-red-400 bg-red-50' :
                     isFocused ? 'border-primary-400 bg-primary-50 shadow-sm' : 'border-gray-300'
                   } focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 resize-none placeholder-gray-400`}
