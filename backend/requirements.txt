@@ -22,5 +22,12 @@ PyPDF2
 pandas
 numpy
 
+
+
+# AWS S3 integration
+boto3
+aioboto3
+
+
 # Logging and utilities
 # logging

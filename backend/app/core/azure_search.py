@@ -15,8 +15,12 @@ from azure.search.documents.indexes.models import (
     VectorSearch,
     VectorSearchAlgorithmConfiguration,
     HnswParameters,
+    SemanticConfiguration,
+    SemanticField,
+    SemanticSettings,
+    VectorSearchProfile,
 )
-from langchain_community.vectorstores import AzureSearch
+from langchain_community.vectorstores.azure_search import AzureSearch
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_core.documents import Document
 
@@ -44,7 +48,6 @@ class AzureSearchService:
         )
         
         # Initialize embedding model
-        # Initialize embedding model
         self.embeddings = AzureOpenAIEmbeddings(
             azure_deployment=settings.AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
             api_key=settings.AZURE_OPENAI_API_KEY,
@@ -64,15 +67,15 @@ class AzureSearchService:
             if self.index_name not in [index.name for index in self.index_client.list_indexes()]:
                 logger.info(f"Creating index: {self.index_name}")
                 
-                # Create index definition
+                # Create index definition with updated schema for newer API versions
                 index = SearchIndex(
                     name=self.index_name,
                     fields=[
                         SimpleField(name="id", type=SearchFieldDataType.String, key=True),
-                        SearchableField(name="text", type=SearchFieldDataType.String),
+                        SearchableField(name="content", type=SearchFieldDataType.String),  # Changed from 'text' to 'content'
                         SimpleField(name="embedding", type=SearchFieldDataType.Collection(SearchFieldDataType.Single), 
                                     vector_search_dimensions=1536, vector_search_profile_name="vector-config"),
-                        SimpleField(name="metadata", type=SearchFieldDataType.String),
+                        SimpleField(name="metadata_str", type=SearchFieldDataType.String),  # Changed from 'metadata' to 'metadata_str'
                     ],
                     vector_search=VectorSearch(
                         algorithms=[
@@ -85,6 +88,12 @@ class AzureSearchService:
                                     ef_search=500,
                                     metric="cosine"
                                 )
+                            )
+                        ],
+                        profiles=[
+                            VectorSearchProfile(
+                                name="vector-config",
+                                algorithm_configuration_name="vector-config"
                             )
                         ]
                     )
@@ -115,12 +124,12 @@ class AzureSearchService:
                 # Generate embeddings for the chunk text
                 embedding = self.embeddings.embed_query(chunk["text"])
                 
-                # Create document
+                # Create document with updated field names for newer API version
                 document = {
                     "id": chunk["id"],
-                    "text": chunk["text"],
+                    "content": chunk["text"],  # Changed from 'text' to 'content'
                     "embedding": embedding,
-                    "metadata": json.dumps(chunk["metadata"])
+                    "metadata_str": json.dumps(chunk["metadata"])  # Changed from 'metadata' to 'metadata_str'
                 }
                 
                 documents.append(document)
@@ -157,7 +166,7 @@ class AzureSearchService:
                 vector=query_embedding,
                 top_k=top_k,
                 vector_fields="embedding",
-                select=["id", "text", "metadata"]
+                select=["id", "content", "metadata_str"]  # Updated field names
             )
             
             # Process results
@@ -165,8 +174,8 @@ class AzureSearchService:
             for result in results:
                 processed_results.append({
                     "id": result["id"],
-                    "text": result["text"],
-                    "metadata": json.loads(result["metadata"]),
+                    "text": result["content"],  # Map 'content' back to 'text' for compatibility
+                    "metadata": json.loads(result["metadata_str"]),  # Map 'metadata_str' back to 'metadata'
                     "score": result["@search.score"]
                 })
             
@@ -186,12 +195,19 @@ class AzureSearchService:
         Returns:
             LangChain retriever object
         """
+        # Define field mappings for the updated schema
+        field_mapping = {
+            "content": "page_content",  # Map LangChain's 'page_content' to index's 'content'
+            "metadata_str": "metadata"   # Map LangChain's 'metadata' to index's 'metadata_str'
+        }
+        
         vector_store = AzureSearch(
             azure_search_endpoint=self.service_endpoint,
             azure_search_key=settings.AZURE_SEARCH_KEY,
             index_name=self.index_name,
             embedding_function=self.embeddings.embed_query,
             search_type="similarity",
+            fields_mapping=field_mapping  # Add field mappings for compatibility
         )
         
         return vector_store.as_retriever(search_kwargs={"k": top_k})

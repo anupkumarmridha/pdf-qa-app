@@ -1,5 +1,7 @@
 import os
 import shutil
+import tempfile
+import uuid
 from typing import List, Dict, Any
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -10,6 +12,7 @@ from app.config import settings
 from app.core.document_processor import DocumentProcessor
 from app.core.azure_search import AzureSearchService
 from app.core.qa_chain import QAService
+from app.core.s3_storage import S3StorageService
 from app.api.models.document import DocumentResponse, DocumentListResponse, DocumentListUploadResponse
 
 router = APIRouter()
@@ -18,6 +21,9 @@ router = APIRouter()
 document_processor = DocumentProcessor()
 azure_search_service = AzureSearchService()
 qa_service = QAService()
+
+# Initialize S3 storage service if enabled
+s3_storage = S3StorageService() if settings.USE_S3_STORAGE else None
 
 # In-memory document storage (in a real app, use a database)
 documents_db = {}
@@ -50,17 +56,37 @@ async def upload_documents(
             })
             continue
         
-        # Generate unique filename
-        unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+        # Generate a unique filename
+        unique_id = str(uuid.uuid4())
+        unique_filename = f"{unique_id}{file_ext}"
+        
+        # Temporary file for processing
+        temp_file_path = ""
+        s3_key = ""
         
         try:
-            # Save uploaded file
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+            if settings.USE_S3_STORAGE:
+                # Create a temporary file to save the upload
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp_file:
+                    temp_file_path = temp_file.name
+                    shutil.copyfileobj(file.file, temp_file)
+                
+                # Upload to S3
+                s3_key = s3_storage.get_s3_key(unique_filename)
+                s3_storage.upload_file(temp_file_path, s3_key)
+                file_path = s3_key  # Pass S3 key as file path for metadata
+            else:
+                # Save to local file system
+                file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+                with open(file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
             
             # Process document
-            chunks, metadata = document_processor.process_file(file_path)
+            chunks, metadata = document_processor.process_file(temp_file_path if settings.USE_S3_STORAGE else file_path)
+            
+            # Add storage info to metadata
+            metadata["storage_type"] = "s3" if settings.USE_S3_STORAGE else "local"
+            metadata["storage_path"] = s3_key if settings.USE_S3_STORAGE else file_path
             
             # Generate document summary
             summary = document_processor.summarize_document(chunks, metadata)
@@ -70,7 +96,8 @@ async def upload_documents(
             documents_db[document_id] = {
                 "id": document_id,
                 "filename": file.filename,
-                "path": file_path,
+                "path": s3_key if settings.USE_S3_STORAGE else file_path,
+                "storage_type": "s3" if settings.USE_S3_STORAGE else "local",
                 "type": metadata["type"],
                 "metadata": metadata,
                 "summary": summary
@@ -92,14 +119,25 @@ async def upload_documents(
             
         except Exception as e:
             # Clean up the file if it was saved
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            if settings.USE_S3_STORAGE:
+                if s3_key and s3_storage.file_exists(s3_key):
+                    s3_storage.delete_file(s3_key)
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+            else:
+                file_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
             
             # Add to failed uploads
             failed_uploads.append({
                 "filename": file.filename,
                 "reason": f"Error processing document: {str(e)}"
             })
+        finally:
+            # Clean up temporary file if it exists
+            if settings.USE_S3_STORAGE and temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
     
     # If no documents were processed successfully, return an error
     if not processed_documents and failed_uploads:
@@ -156,12 +194,18 @@ async def delete_document(document_id: str):
     if document_id not in documents_db:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Get file path
-    file_path = documents_db[document_id]["path"]
+    doc = documents_db[document_id]
     
-    # Delete file if it exists
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    # Delete the file based on storage type
+    if doc.get("storage_type") == "s3" and settings.USE_S3_STORAGE:
+        s3_key = doc["path"]
+        if s3_storage.file_exists(s3_key):
+            s3_storage.delete_file(s3_key)
+    else:
+        # Local file
+        file_path = doc["path"]
+        if os.path.exists(file_path):
+            os.remove(file_path)
     
     # Remove from in-memory database
     del documents_db[document_id]
