@@ -123,33 +123,32 @@ const DocumentPage = () => {
     }
   };
 
-  const handleQuestionSubmit = async (questionText) => {
-    // Don't allow questions if document is still processing
-    if (isProcessing) return;
+const handleQuestionSubmit = async (questionText) => {
+  // Don't allow questions if document is still processing
+  if (isProcessing) return;
+  
+  setIsAsking(true);
+  setQaError('');
+  
+  try {
+    // Add user message to conversation and get the chat ID that was used
+    const { chatId } = await addUserMessage(questionText);
     
-    setIsAsking(true);
-    setQaError('');
+    // Now use that specific chat ID when asking the question to maintain continuity
+    const response = await askDocumentQuestion(id, questionText, chatId);
     
-    try {
-      // Add user message to conversation first
-      await addUserMessage(questionText);
-      
-      // Now that we have a chat ID (either existing or newly created), we can ask the question
-      // Make sure to use the current chat ID that might have just been created
-      const response = await askDocumentQuestion(id, questionText, currentChatId);
-      
-      // Update current sources for the sidebar
-      setCurrentSources(response.sources);
-      
-      // Add assistant response to conversation
-      await addAssistantMessage(response.answer, response.sources);
-    } catch (err) {
-      console.error('Error asking question:', err);
-      setQaError('Failed to get an answer. Please try again.');
-    } finally {
-      setIsAsking(false);
-    }
-  };
+    // Update current sources for the sidebar
+    setCurrentSources(response.sources);
+    
+    // Add assistant response to the SAME chat
+    await addAssistantMessage(response.answer, response.sources, chatId);
+  } catch (err) {
+    console.error('Error asking question:', err);
+    setQaError('Failed to get an answer. Please try again.');
+  } finally {
+    setIsAsking(false);
+  }
+};
 
   const handleNewChat = async () => {
     // Clear conversation and reset sources

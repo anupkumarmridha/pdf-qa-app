@@ -61,34 +61,36 @@ const QAPage = () => {
     }
   };
 
-  const handleQuestionSubmit = async (questionText) => {
-    if (documents.length === 0) {
-      setQaError('You need to upload documents first before asking questions.');
-      return;
-    }
+
+// Replace the existing handleQuestionSubmit function with this one:
+const handleQuestionSubmit = async (questionText) => {
+  if (documents.length === 0) {
+    setQaError('You need to upload documents first before asking questions.');
+    return;
+  }
+  
+  setIsAsking(true);
+  setQaError('');
+  
+  try {
+    // Add user message and get the chat ID that was used
+    const { chatId } = await addUserMessage(questionText);
     
-    setIsAsking(true);
-    setQaError('');
+    // Pass the same chat ID to ensure the response goes to the same chat
+    const response = await askQuestion(questionText, chatId);
     
-    // Add user message to conversation using MongoDB API
-    await addUserMessage(questionText);
+    // Update the current sources for the sidebar
+    setCurrentSources(response.sources);
     
-    try {
-      // Pass the current chat ID to maintain conversation context
-      const response = await askQuestion(questionText, currentChatId);
-      
-      // Update the current sources for the sidebar
-      setCurrentSources(response.sources);
-      
-      // Add assistant response to conversation
-      await addAssistantMessage(response.answer, response.sources);
-    } catch (err) {
-      console.error('Error asking question:', err);
-      setQaError('Failed to get an answer. Please try again.');
-    } finally {
-      setIsAsking(false);
-    }
-  };
+    // Add assistant response to the same chat
+    await addAssistantMessage(response.answer, response.sources, chatId);
+  } catch (err) {
+    console.error('Error asking question:', err);
+    setQaError('Failed to get an answer. Please try again.');
+  } finally {
+    setIsAsking(false);
+  }
+};
   
   const handleNewChat = async () => {
     // Clear the conversation using MongoDB API

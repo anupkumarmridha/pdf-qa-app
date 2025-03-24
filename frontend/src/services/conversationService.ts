@@ -60,29 +60,33 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
 
   /**
    * Add a user question to the conversation
+   * Returns both the message and the chat ID that was used
    */
   const addUserMessage = async (content: string) => {
     setError(null);
     
     try {
+      // Store current chat ID locally to avoid race conditions
+      let chatIdToUse = currentChatId;
+      
       // If no current chat ID, create a new chat first
-      if (!currentChatId) {
+      if (!chatIdToUse) {
         const newChat = await chatService.createChat(
           content.length > 30 ? content.substring(0, 27) + '...' : content,
           documentId || undefined
         );
-        setCurrentChatId(newChat.id);
-        
-        // Add message to the new chat
-        const message = await chatService.addMessage(newChat.id, 'user', content);
-        setMessages(prev => [...prev, message]);
-        return message;
-      } else {
-        // Add message to existing chat
-        const message = await chatService.addMessage(currentChatId, 'user', content);
-        setMessages(prev => [...prev, message]);
-        return message;
+        chatIdToUse = newChat.id;
+        setCurrentChatId(chatIdToUse);
       }
+      
+      // Add message to the chat
+      const message = await chatService.addMessage(chatIdToUse, 'user', content);
+      
+      // Update local state
+      setMessages(prev => [...prev, message]);
+      
+      // Return both the message and the chat ID that was used
+      return { message, chatId: chatIdToUse };
     } catch (err) {
       console.error('Error adding user message:', err);
       setError('Failed to send message');
@@ -95,35 +99,42 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
         timestamp: new Date()
       };
       setMessages(prev => [...prev, tempMessage]);
-      return tempMessage;
+      
+      // Return the temporary message and current chat ID
+      return { message: tempMessage, chatId: currentChatId };
     }
   };
 
   /**
    * Add an assistant response to the conversation
+   * The chatId parameter ensures we use the same chat as the user message
    */
-  const addAssistantMessage = async (content: string, sources?: any[]) => {
+  const addAssistantMessage = async (content: string, sources?: any[], specificChatId?: string | null) => {
     setError(null);
     
     try {
+      // Use the specified chat ID if provided, otherwise use current chat ID
+      const chatIdToUse = specificChatId || currentChatId;
+      
       // Handle case where there's no active chat - create one first
-      if (!currentChatId) {
+      if (!chatIdToUse) {
         // First create a new chat with a default title
         const newChat = await chatService.createChat(
           "New conversation",
           documentId || undefined
         );
-        setCurrentChatId(newChat.id);
+        const newChatId = newChat.id;
+        setCurrentChatId(newChatId);
         
         // Then add the assistant message
-        const message = await chatService.addMessage(newChat.id, 'assistant', content, sources);
+        const message = await chatService.addMessage(newChatId, 'assistant', content, sources);
         setMessages(prev => [...prev, message]);
-        return message;
+        return { message, chatId: newChatId };
       } else {
         // Normal case - add to existing chat
-        const message = await chatService.addMessage(currentChatId, 'assistant', content, sources);
+        const message = await chatService.addMessage(chatIdToUse, 'assistant', content, sources);
         setMessages(prev => [...prev, message]);
-        return message;
+        return { message, chatId: chatIdToUse };
       }
     } catch (err) {
       console.error('Error adding assistant message:', err);
@@ -138,7 +149,68 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
         sources
       };
       setMessages(prev => [...prev, tempMessage]);
-      return tempMessage;
+      return { message: tempMessage, chatId: currentChatId };
+    }
+  };
+
+  /**
+   * Ensure a complete conversation is added in proper sequence
+   * This helps prevent split conversations by using an atomic-like operation
+   */
+  const addCompleteExchange = async (question: string, answer: string, sources?: any[]) => {
+    setError(null);
+    
+    try {
+      // Store current chat ID locally to avoid race conditions
+      let chatIdToUse = currentChatId;
+      
+      // If no current chat ID, create a new chat first
+      if (!chatIdToUse) {
+        const newChat = await chatService.createChat(
+          question.length > 30 ? question.substring(0, 27) + '...' : question,
+          documentId || undefined
+        );
+        chatIdToUse = newChat.id;
+        setCurrentChatId(chatIdToUse);
+      }
+      
+      // Add user message
+      const userMessage = await chatService.addMessage(chatIdToUse, 'user', question);
+      
+      // Add assistant message to the same chat
+      const assistantMessage = await chatService.addMessage(chatIdToUse, 'assistant', answer, sources);
+      
+      // Update local state with both messages
+      setMessages(prev => [...prev, userMessage, assistantMessage]);
+      
+      return { userMessage, assistantMessage, chatId: chatIdToUse };
+    } catch (err) {
+      console.error('Error adding complete exchange:', err);
+      setError('Failed to save conversation');
+      
+      // Still add the messages to the UI to maintain consistency
+      const tempUserMessage: Message = {
+        id: `temp-user-${Date.now()}`,
+        role: 'user',
+        content: question,
+        timestamp: new Date()
+      };
+      
+      const tempAssistantMessage: Message = {
+        id: `temp-assistant-${Date.now()}`,
+        role: 'assistant',
+        content: answer,
+        timestamp: new Date(),
+        sources
+      };
+      
+      setMessages(prev => [...prev, tempUserMessage, tempAssistantMessage]);
+      
+      return { 
+        userMessage: tempUserMessage, 
+        assistantMessage: tempAssistantMessage, 
+        chatId: currentChatId 
+      };
     }
   };
 
@@ -216,6 +288,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
     messages,
     addUserMessage,
     addAssistantMessage,
+    addCompleteExchange,
     clearConversation,
     loadChat,
     deleteChat,

@@ -75,6 +75,7 @@ async def get_chat(chat_id: str):
     """Get a chat by ID with its messages."""
     try:
         result = await Chat.get_chat_with_messages(chat_id)
+        # print(result)
         if not result:
             raise HTTPException(status_code=404, detail="Chat not found")
         return result
