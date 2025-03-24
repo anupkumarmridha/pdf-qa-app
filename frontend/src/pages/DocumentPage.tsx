@@ -5,6 +5,7 @@ import DocumentSummary from '../components/DocumentSummary';
 import QuestionForm from '../components/QuestionForm';
 import ConversationHistory from '../components/ConversationHistory';
 import SourcesList from '../components/SourcesList';
+import NewChatButton from '../components/NewChatButton';
 import { getDocument, checkDocumentStatus } from '../services/documentService';
 import { askDocumentQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
@@ -134,6 +135,12 @@ const DocumentPage = () => {
     }
   };
 
+  const handleNewChat = () => {
+    // Clear conversation and reset sources
+    clearConversation();
+    setCurrentSources([]);
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-screen-minus-nav">
@@ -205,6 +212,12 @@ const DocumentPage = () => {
           {/* Only show conversation history when there are messages */}
           {hasConversation ? (
             <>
+              <div className="flex justify-between items-center mb-2">
+                <h2 className="text-lg font-semibold text-gray-800">
+                  Conversation about: {document.filename}
+                </h2>
+                <NewChatButton onClick={handleNewChat} />
+              </div>
               <ConversationHistory 
                 messages={messages} 
                 onClearConversation={clearConversation} 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import QuestionForm from '../components/QuestionForm';
 import ConversationHistory from '../components/ConversationHistory';
 import SourcesList from '../components/SourcesList';
+import NewChatButton from '../components/NewChatButton';
 import { getDocuments } from '../services/documentService';
 import { askQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
@@ -74,6 +75,12 @@ const QAPage = () => {
     }
   };
   
+  const handleNewChat = () => {
+    // Clear the conversation and reset sources
+    clearConversation();
+    setCurrentSources([]);
+  };
+  
   // When the last message changes, update the sidebar sources
   useEffect(() => {
     if (messages.length > 0) {
@@ -121,6 +128,10 @@ const QAPage = () => {
             {/* Only show conversation history when there are messages */}
             {hasConversation ? (
               <>
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-lg font-semibold text-gray-800">Conversation</h2>
+                  <NewChatButton onClick={handleNewChat} />
+                </div>
                 <ConversationHistory 
                   messages={messages} 
                   onClearConversation={clearConversation} 
