@@ -4,7 +4,7 @@ import { FiArrowLeft, FiLoader } from 'react-icons/fi';
 import DocumentSummary from '../components/DocumentSummary';
 import QuestionForm from '../components/QuestionForm';
 import AnswerDisplay from '../components/AnswerDisplay';
-import { getDocument } from '../services/documentService';
+import { getDocument, checkDocumentStatus } from '../services/documentService';
 import { askDocumentQuestion } from '../services/qaService';
 
 const DocumentPage = () => {
@@ -20,10 +20,51 @@ const DocumentPage = () => {
   const [sources, setSources] = useState([]);
   const [isAsking, setIsAsking] = useState(false);
   const [qaError, setQaError] = useState('');
+  
+  // Add state for document processing
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [statusPolling, setStatusPolling] = useState(null);
 
   useEffect(() => {
     fetchDocument();
+    
+    // Clean up polling on unmount
+    return () => {
+      if (statusPolling) {
+        clearInterval(statusPolling);
+      }
+    };
   }, [id]);
+
+  const checkDocumentProcessingStatus = (doc) => {
+    if (doc && doc.status === "processing") {
+      setIsProcessing(true);
+      
+      // Start polling for status
+      const interval = setInterval(async () => {
+        try {
+          const status = await checkDocumentStatus(doc.id);
+          if (status.status === "ready") {
+            // Document is ready, refresh document data
+            clearInterval(interval);
+            setStatusPolling(null);
+            setIsProcessing(false);
+            fetchDocument();
+          } else if (status.status === "error") {
+            // Handle error
+            clearInterval(interval);
+            setStatusPolling(null);
+            setIsProcessing(false);
+            setError(`Error processing document: ${status.error_message || "Unknown error"}`);
+          }
+        } catch (err) {
+          console.error("Error checking document status:", err);
+        }
+      }, 3000);
+      
+      setStatusPolling(interval);
+    }
+  };
 
   const fetchDocument = async () => {
     setLoading(true);
@@ -32,6 +73,9 @@ const DocumentPage = () => {
     try {
       const documentData = await getDocument(id);
       setDocument(documentData);
+      
+      // Check if document is still processing
+      checkDocumentProcessingStatus(documentData);
     } catch (err) {
       console.error('Error fetching document:', err);
       setError('Failed to load document. It may have been deleted or there was a server error.');
@@ -41,6 +85,9 @@ const DocumentPage = () => {
   };
 
   const handleQuestionSubmit = async (questionText) => {
+    // Don't allow questions if document is still processing
+    if (isProcessing) return;
+    
     setQuestion(questionText);
     setIsAsking(true);
     setQaError('');
@@ -112,12 +159,23 @@ const DocumentPage = () => {
         </button>
       </div>
 
+      {isProcessing && (
+        <div className="mb-6 bg-blue-50 p-4 rounded-md flex items-center">
+          <FiLoader className="animate-spin h-5 w-5 text-blue-600 mr-3" />
+          <p className="text-blue-700">
+            This document is still being processed. 
+            Full content and search functionality will be available once processing is complete.
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-6 md:grid-cols-2 mb-6">
         <DocumentSummary document={document} />
         <QuestionForm 
           onSubmit={handleQuestionSubmit} 
           documentId={id}
           isLoading={isAsking}
+          disabled={isProcessing}
         />
       </div>
 

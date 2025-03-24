@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { FiUpload, FiFile, FiX, FiLoader, FiCheck, FiAlertCircle } from 'react-icons/fi';
-import { uploadDocuments } from '../services/documentService';
+import { uploadDocuments, checkDocumentStatus, getDocument } from '../services/documentService';
 
 const FileUpload = ({ onUploadSuccess }) => {
   const [files, setFiles] = useState([]);
@@ -9,6 +9,17 @@ const FileUpload = ({ onUploadSuccess }) => {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(0);
   const [uploadResults, setUploadResults] = useState(null);
+  const [processingDocuments, setProcessingDocuments] = useState([]);
+  const [statusPolling, setStatusPolling] = useState(null);
+
+  // Clean up polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (statusPolling) {
+        clearInterval(statusPolling);
+      }
+    };
+  }, [statusPolling]);
 
   const onDrop = useCallback((acceptedFiles) => {
     // Reset states
@@ -49,6 +60,37 @@ const FileUpload = ({ onUploadSuccess }) => {
     multiple: true
   });
 
+  const pollDocumentStatus = async (documentId) => {
+    try {
+      const status = await checkDocumentStatus(documentId);
+      
+      if (status.status === "ready") {
+        // Document is ready, remove from processing list
+        setProcessingDocuments(prev => prev.filter(id => id !== documentId));
+        
+        // Notify parent if this was the last document being processed
+        if (processingDocuments.length === 1) {
+          const response = await getDocument(documentId);
+          if (onUploadSuccess) {
+            onUploadSuccess(response);
+          }
+        }
+      } else if (status.status === "error") {
+        // Handle error
+        setProcessingDocuments(prev => prev.filter(id => id !== documentId));
+        setError(`Error processing document: ${status.error_message || "Unknown error"}`);
+      }
+      
+      // Check if all documents are done processing
+      if (processingDocuments.length <= 1) {
+        clearInterval(statusPolling);
+        setStatusPolling(null);
+      }
+    } catch (err) {
+      console.error("Error checking document status:", err);
+    }
+  };
+
   const handleUpload = async () => {
     if (files.length === 0) return;
     
@@ -77,8 +119,27 @@ const FileUpload = ({ onUploadSuccess }) => {
       // Set upload results
       setUploadResults(response);
       
-      // Call success callback if all documents were uploaded successfully
-      if (onUploadSuccess && response.documents.length > 0) {
+      // Get IDs of processing documents
+      const processingDocs = response.documents
+        .filter(doc => doc.status === "processing")
+        .map(doc => doc.id);
+      
+      if (processingDocs.length > 0) {
+        setProcessingDocuments(processingDocs);
+        
+        // Start polling for document status
+        const interval = setInterval(() => {
+          processingDocs.forEach(docId => pollDocumentStatus(docId));
+        }, 3000); // Check every 3 seconds
+        
+        setStatusPolling(interval);
+        
+        // Call success callback with first document for immediate navigation
+        if (onUploadSuccess && response.documents.length > 0) {
+          onUploadSuccess(response.documents[0]);
+        }
+      } else if (onUploadSuccess && response.documents.length > 0) {
+        // All documents are ready
         onUploadSuccess(response.documents[0]);
       }
       
@@ -142,6 +203,15 @@ const FileUpload = ({ onUploadSuccess }) => {
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {files.length > 0 && processingDocuments.length > 0 && (
+        <div className="mt-4 mb-4 bg-blue-50 p-3 rounded-md">
+          <p className="text-blue-700">
+            <FiLoader className="inline mr-2 animate-spin" />
+            Processing {processingDocuments.length} document(s) in the background...
+          </p>
         </div>
       )}
 

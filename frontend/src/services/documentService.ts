@@ -110,3 +110,18 @@ export const getDocumentSummary = async (documentId) => {
     throw error;
   }
 };
+
+/**
+ * Check the processing status of a document
+ * 
+ * @param {string} documentId - ID of the document to check
+ * @returns {Promise<Object>} - Status information {status: "processing"|"ready"|"error", error_message: string|null}
+ */
+export const checkDocumentStatus = async (documentId) => {
+  try {
+    return await api.get(`/documents/${documentId}/status`);
+  } catch (error) {
+    console.error(`Error checking status for document ${documentId}:`, error);
+    throw error;
+  }
+};

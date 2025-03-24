@@ -1,3 +1,4 @@
+from asyncio.log import logger
 import os
 import shutil
 import tempfile
@@ -31,6 +32,38 @@ documents_db = {}
 class DocumentListUploadResponse(BaseModel):
     documents: List[DocumentResponse]
     failed_uploads: List[Dict[str, str]] = []
+    
+    
+
+@router.get("/{document_id}/status")
+async def get_document_status(document_id: str):
+    """Get the processing status of a document."""
+    if document_id not in documents_db:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    doc = documents_db[document_id]
+    return {
+        "document_id": document_id,
+        "status": doc.get("status", "unknown"),
+        "error_message": doc.get("error_message", None)
+    }
+
+async def update_document_status(document_id: str, chunks: List[Dict[str, Any]]):
+    """Background task to upload chunks and update document status."""
+    try:
+        # Upload chunks to Azure Search
+        await azure_search_service.upload_chunks(chunks)
+        
+        # Update document status to ready
+        if document_id in documents_db:
+            documents_db[document_id]["status"] = "ready"
+            logger.info(f"Document {document_id} processing completed.")
+    except Exception as e:
+        # Set status to error if upload fails
+        if document_id in documents_db:
+            documents_db[document_id]["status"] = "error"
+            documents_db[document_id]["error_message"] = str(e)
+        logger.error(f"Error processing document {document_id}: {str(e)}")
 
 @router.post("/upload", response_model=DocumentListUploadResponse)
 async def upload_documents(
@@ -100,11 +133,12 @@ async def upload_documents(
                 "storage_type": "s3" if settings.USE_S3_STORAGE else "local",
                 "type": metadata["type"],
                 "metadata": metadata,
-                "summary": summary
+                "summary": summary,
+                "status": "processing"
             }
             
             # Upload chunks to Azure Search (in background)
-            background_tasks.add_task(azure_search_service.upload_chunks, chunks)
+            background_tasks.add_task(update_document_status, document_id, chunks)
             
             # Add to processed documents list
             processed_documents.append(
@@ -113,7 +147,8 @@ async def upload_documents(
                     filename=file.filename,
                     type=metadata["type"],
                     summary=summary,
-                    metadata=metadata
+                    metadata=metadata,
+                    status="processing" 
                 )
             )
             
@@ -151,6 +186,8 @@ async def upload_documents(
         documents=processed_documents,
         failed_uploads=failed_uploads
     )
+    
+
 
 @router.get("/", response_model=DocumentListResponse)
 async def list_documents():

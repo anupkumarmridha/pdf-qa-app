@@ -32,6 +32,12 @@ const DocumentList = ({ refreshTrigger }) => {
     event.preventDefault();
     event.stopPropagation();
     
+    // Don't allow deleting documents that are still processing
+    const doc = documents.find(d => d.id === documentId);
+    if (doc && doc.status === "processing") {
+      return;
+    }
+    
     // Add to deleting ids to show loading state
     setDeletingIds([...deletingIds, documentId]);
     
@@ -100,9 +106,17 @@ const DocumentList = ({ refreshTrigger }) => {
                   <FiDatabase className="h-6 w-6 text-green-500 mr-3" />
                 )}
                 <div>
-                  <h3 className="text-lg font-medium text-gray-800">
-                    {document.filename}
-                  </h3>
+                  <div className="flex items-center">
+                    <h3 className="text-lg font-medium text-gray-800">
+                      {document.filename}
+                    </h3>
+                    {document.status === "processing" && (
+                      <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full flex items-center">
+                        <FiLoader className="animate-spin mr-1 h-3 w-3" />
+                        Processing
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-gray-500">
                     {document.type.toUpperCase()} • 
                     {new Date(document.metadata.uploadTime || Date.now()).toLocaleDateString()}
@@ -113,7 +127,8 @@ const DocumentList = ({ refreshTrigger }) => {
                 <button
                   onClick={(e) => handleDelete(document.id, e)}
                   className="text-gray-400 hover:text-red-500 mr-3"
-                  disabled={deletingIds.includes(document.id)}
+                  disabled={deletingIds.includes(document.id) || document.status === "processing"}
+                  style={{ opacity: document.status === "processing" ? 0.5 : 1 }}
                 >
                   {deletingIds.includes(document.id) ? (
                     <FiLoader className="animate-spin h-5 w-5" />

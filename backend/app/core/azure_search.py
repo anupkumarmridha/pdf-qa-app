@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import List, Dict, Any, Optional
@@ -137,7 +138,7 @@ class AzureSearchService:
         self.index_client.create_index(index_definition)
         logger.info(f"Successfully created index '{self.index_name}'.")
         
-    def upload_chunks(self, chunks: List[Dict[str, Any]]) -> None:
+    async def upload_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """Upload document chunks to Azure AI Search with computed embeddings."""
         documents = []
         for chunk in chunks:
@@ -166,12 +167,14 @@ class AzureSearchService:
             logger.warning("No valid documents to upload.")
             return
 
+        # print(documents)
         # Upload in batches of 100
         batch_size = 100
         for i in range(0, len(documents), batch_size):
             batch = documents[i : i + batch_size]
             try:
-                self.search_client.upload_documents(documents=batch)
+                # Use sync client but in a way that doesn't block the event loop
+                await asyncio.to_thread(self.search_client.upload_documents, documents=batch)
                 logger.info(f"Uploaded batch {i // batch_size + 1}: {len(batch)} documents.")
             except Exception as e:
                 logger.error(f"Failed to upload batch starting at index {i}: {e}")

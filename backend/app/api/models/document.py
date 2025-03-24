@@ -15,6 +15,7 @@ class DocumentResponse(DocumentBase):
     id: str
     summary: str
     metadata: Dict[str, Any]
+    status: str = "ready"
 
 class DocumentListResponse(BaseModel):
     """Model for listing multiple documents."""
