@@ -2,13 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { FiUser, FiMessageSquare, FiChevronDown, FiChevronUp, FiClock, FiTrash2, FiX } from 'react-icons/fi';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-  sources?: any[];
-}
+import { Message } from '../services/chatService';
 
 interface ConversationHistoryProps {
   messages: Message[];
@@ -67,7 +61,7 @@ const ConversationHistory: React.FC<ConversationHistoryProps> = ({ messages, onC
       <div className="px-4 py-6 space-y-6 max-h-[calc(80vh-200px)] overflow-y-auto">
         {messages.map((message, index) => (
           <div 
-            key={index} 
+            key={message.id || index} 
             className={`animate-fade-in flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div className={`
@@ -98,7 +92,7 @@ const ConversationHistory: React.FC<ConversationHistoryProps> = ({ messages, onC
                   </span>
                   <span className={`text-xs ${message.role === 'user' ? 'text-primary-200' : 'text-gray-400'} flex items-center ml-2`}>
                     <FiClock className="mr-1 h-3 w-3" />
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
                 

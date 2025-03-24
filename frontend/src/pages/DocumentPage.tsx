@@ -28,7 +28,7 @@ const DocumentPage = () => {
   // For displaying sources in the sidebar
   const [currentSources, setCurrentSources] = useState([]);
   
-  // Conversation state - pass the chat ID if we have one
+  // Conversation state - pass document ID and chat ID if we have one
   const {
     messages,
     addUserMessage,
@@ -36,7 +36,8 @@ const DocumentPage = () => {
     clearConversation,
     loadChat,
     hasConversation,
-    currentChatId
+    currentChatId,
+    isLoading: isLoadingChat
   } = useConversation(id, chatIdFromUrl);
   
   // Add state for document processing
@@ -130,7 +131,7 @@ const DocumentPage = () => {
     setQaError('');
     
     // Add user message to conversation
-    addUserMessage(questionText);
+    await addUserMessage(questionText);
     
     try {
       const response = await askDocumentQuestion(id, questionText);
@@ -139,7 +140,7 @@ const DocumentPage = () => {
       setCurrentSources(response.sources);
       
       // Add assistant response to conversation
-      addAssistantMessage(response.answer, response.sources);
+      await addAssistantMessage(response.answer, response.sources);
     } catch (err) {
       console.error('Error asking question:', err);
       setQaError('Failed to get an answer. Please try again.');
@@ -148,14 +149,17 @@ const DocumentPage = () => {
     }
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
     // Clear conversation and reset sources
-    clearConversation();
+    await clearConversation();
     setCurrentSources([]);
+    
+    // Remove chat ID from URL
+    setSearchParams({});
   };
   
-  const handleSelectChat = (chatId) => {
-    loadChat(chatId);
+  const handleSelectChat = async (chatId) => {
+    await loadChat(chatId);
     
     // Reflect the chat ID in the URL
     setSearchParams({ chat: chatId });
@@ -163,12 +167,12 @@ const DocumentPage = () => {
 
   // Render content for inside the chat sidebar layout
   const renderContent = () => {
-    if (loading) {
+    if (loading || isLoadingChat) {
       return (
         <div className="h-full flex justify-center items-center">
           <div className="text-center animate-pulse-subtle">
-            <FiLoader className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-            <p className="text-gray-600">Loading document...</p>
+            <FiLoader className="h-12 w-12 mx-auto mb-4 text-gray-300 animate-spin" />
+            <p className="text-gray-600">Loading document and conversations...</p>
           </div>
         </div>
       );
@@ -225,7 +229,7 @@ const DocumentPage = () => {
           <>
             <ConversationHistory 
               messages={messages} 
-              onClearConversation={clearConversation} 
+              onClearConversation={handleNewChat} 
             />
             <QuestionForm 
               onSubmit={handleQuestionSubmit} 

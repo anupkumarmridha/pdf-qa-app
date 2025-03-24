@@ -59,7 +59,7 @@ export const uploadDocument = async (formData, progressCallback = null) => {
  */
 export const getDocuments = async () => {
   try {
-    return await api.get('/documents');
+    return await api.get('/documents/');
   } catch (error) {
     console.error('Error fetching documents:', error);
     throw error;

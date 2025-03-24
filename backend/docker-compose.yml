@@ -1,21 +1,56 @@
 version: '3.8'
 
 services:
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app-network
+
   backend:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
+    container_name: backend
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
+      - ./backend:/app
       - ./uploads:/app/uploads
-      - ./.env:/app/.env
-    restart: unless-stopped
     environment:
+      - MONGODB_URI=mongodb://admin:password@mongodb:27017/
+      - MONGODB_DB_NAME=document_qa
       - UPLOAD_DIR=uploads
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - app-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:

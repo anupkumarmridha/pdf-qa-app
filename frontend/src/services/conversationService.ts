@@ -1,165 +1,200 @@
 import { useState, useEffect } from 'react';
-import { updateChatSession, createChatSession } from './chatHistoryService';
+import * as chatService from './chatService';
 
 export interface Message {
+  id?: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
   sources?: any[];
 }
 
-// Local storage key for storing the conversation history
-const CONVERSATION_PREFIX = 'pdf_qa_conversation_history';
-
 /**
- * Custom hook to manage conversation history
+ * Custom hook to manage conversation history using MongoDB API
  */
 export const useConversation = (documentId?: string | null, chatId?: string | null) => {
   // State to hold conversation messages
   const [messages, setMessages] = useState<Message[]>([]);
-  // Keep track of the current chat ID
+  // Current chat ID
   const [currentChatId, setCurrentChatId] = useState<string | null>(chatId || null);
-  
-  // We'll only create a chat session when the first message is actually sent
+  // Loading state
+  const [isLoading, setIsLoading] = useState(false);
+  // Error state
+  const [error, setError] = useState<string | null>(null);
+
+  // Load messages when chat ID changes
+  useEffect(() => {
+    if (currentChatId) {
+      loadMessages(currentChatId);
+    } else {
+      setMessages([]);
+    }
+  }, [currentChatId]);
+
+  // Create a new chat if one wasn't provided
   useEffect(() => {
     if (chatId) {
       setCurrentChatId(chatId);
     }
   }, [chatId]);
-  
-  // Generate a storage key that's specific to the document and chat ID
-  const storageKey = currentChatId ? 
-    documentId ? 
-      `${CONVERSATION_PREFIX}_document_${documentId}_${currentChatId}` : 
-      `${CONVERSATION_PREFIX}_${currentChatId}` :
-    null;
-  
-  // Load conversation history from localStorage on component mount
-  useEffect(() => {
-    if (!storageKey) return;
+
+  /**
+   * Load messages for a specific chat
+   */
+  const loadMessages = async (chatId: string) => {
+    setIsLoading(true);
+    setError(null);
     
-    const storedConversation = localStorage.getItem(storageKey);
-    if (storedConversation) {
-      try {
-        // Parse the stored JSON data
-        const parsedMessages = JSON.parse(storedConversation);
-        
-        // Convert timestamp strings back to Date objects
-        const formattedMessages = parsedMessages.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp)
-        }));
-        
-        setMessages(formattedMessages);
-        
-        // Update the chat session metadata
-        if (currentChatId) {
-          updateChatSession(currentChatId, formattedMessages);
-        }
-      } catch (error) {
-        console.error('Error parsing stored conversation:', error);
-        // If there's an error parsing, start with empty conversation
-        setMessages([]);
-      }
+    try {
+      const response = await chatService.getChat(chatId);
+      setMessages(response.messages);
+    } catch (err) {
+      console.error('Error loading chat messages:', err);
+      setError('Failed to load conversation history');
+      setMessages([]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [storageKey, currentChatId]);
-  
-  // Save conversation to localStorage whenever it changes
-  useEffect(() => {
-    if (storageKey && messages.length > 0) {
-      localStorage.setItem(storageKey, JSON.stringify(messages));
-      
-      // Update chat session metadata
-      if (currentChatId) {
-        updateChatSession(currentChatId, messages);
-      }
-    }
-  }, [messages, storageKey, currentChatId]);
-  
+  };
+
   /**
    * Add a user question to the conversation
    */
-  const addUserMessage = (content: string) => {
-    // If no current chat ID, create a new one
-    if (!currentChatId) {
-      const newChatId = createChatSession(documentId || undefined);
-      setCurrentChatId(newChatId);
+  const addUserMessage = async (content: string) => {
+    setError(null);
+    
+    try {
+      // If no current chat ID, create a new chat
+      if (!currentChatId) {
+        const newChat = await chatService.createChat(
+          content.length > 30 ? content.substring(0, 27) + '...' : content,
+          documentId || undefined
+        );
+        setCurrentChatId(newChat.id);
+        
+        // Add message to the new chat
+        const message = await chatService.addMessage(newChat.id, 'user', content);
+        setMessages(prev => [...prev, message]);
+        return message;
+      } else {
+        // Add message to existing chat
+        const message = await chatService.addMessage(currentChatId, 'user', content);
+        setMessages(prev => [...prev, message]);
+        return message;
+      }
+    } catch (err) {
+      console.error('Error adding user message:', err);
+      setError('Failed to send message');
+      // Still add the message to the UI to maintain consistency
+      const tempMessage: Message = {
+        id: `temp-${Date.now()}`,
+        role: 'user',
+        content,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, tempMessage]);
+      return tempMessage;
     }
-    
-    const userMessage: Message = {
-      role: 'user',
-      content,
-      timestamp: new Date()
-    };
-    
-    setMessages(prevMessages => [...prevMessages, userMessage]);
-    return userMessage;
   };
-  
+
   /**
    * Add an assistant response to the conversation
    */
-  const addAssistantMessage = (content: string, sources?: any[]) => {
-    const assistantMessage: Message = {
-      role: 'assistant',
-      content,
-      timestamp: new Date(),
-      sources
-    };
+  const addAssistantMessage = async (content: string, sources?: any[]) => {
+    setError(null);
     
-    setMessages(prevMessages => [...prevMessages, assistantMessage]);
-    return assistantMessage;
+    try {
+      if (!currentChatId) {
+        console.error('Cannot add assistant message - no active chat');
+        return null;
+      }
+      
+      const message = await chatService.addMessage(currentChatId, 'assistant', content, sources);
+      setMessages(prev => [...prev, message]);
+      return message;
+    } catch (err) {
+      console.error('Error adding assistant message:', err);
+      setError('Failed to receive response');
+      // Still add the message to the UI to maintain consistency
+      const tempMessage: Message = {
+        id: `temp-${Date.now()}`,
+        role: 'assistant',
+        content,
+        timestamp: new Date(),
+        sources
+      };
+      setMessages(prev => [...prev, tempMessage]);
+      return tempMessage;
+    }
   };
-  
+
   /**
    * Clear the entire conversation history
    */
-  const clearConversation = () => {
-    setMessages([]);
+  const clearConversation = async () => {
+    setError(null);
     
-    if (storageKey) {
-      localStorage.removeItem(storageKey);
+    try {
+      if (currentChatId) {
+        await chatService.clearMessages(currentChatId);
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error('Error clearing conversation:', err);
+      setError('Failed to clear conversation');
     }
-    
-    // Create a new chat session
-    const newChatId = createChatSession(documentId || undefined);
-    setCurrentChatId(newChatId);
   };
-  
+
   /**
    * Load a specific chat by ID
    */
-  const loadChat = (chatId: string) => {
+  const loadChat = async (chatId: string) => {
     setCurrentChatId(chatId);
   };
-  
+
   /**
-   * Check if there is any conversation history
+   * Get chats for the current document or all general chats
    */
-  const hasConversation = messages.length > 0;
-  
-  /**
-   * Get the last exchange (question/answer pair)
-   */
-  const getLastExchange = () => {
-    if (messages.length < 2) return null;
-    
-    const lastIndex = messages.length - 1;
-    return {
-      question: messages[lastIndex - 1].content,
-      answer: messages[lastIndex].content
-    };
+  const getChatsForDocument = async () => {
+    try {
+      return await chatService.getChats(documentId || undefined);
+    } catch (err) {
+      console.error('Error getting chats:', err);
+      setError('Failed to load chat history');
+      return [];
+    }
   };
-  
+
+  /**
+   * Delete a specific chat
+   */
+  const deleteChat = async (chatId: string) => {
+    try {
+      await chatService.deleteChat(chatId);
+      if (currentChatId === chatId) {
+        setCurrentChatId(null);
+        setMessages([]);
+      }
+      return true;
+    } catch (err) {
+      console.error('Error deleting chat:', err);
+      setError('Failed to delete chat');
+      return false;
+    }
+  };
+
   return {
     messages,
     addUserMessage,
     addAssistantMessage,
     clearConversation,
     loadChat,
-    hasConversation,
-    getLastExchange,
-    currentChatId
+    deleteChat,
+    getChatsForDocument,
+    hasConversation: messages.length > 0,
+    currentChatId,
+    isLoading,
+    error
   };
 };
 

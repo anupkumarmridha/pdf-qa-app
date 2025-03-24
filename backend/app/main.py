@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api.routes import documents, qa
+from app.api.routes import documents, qa, chats
+from app.core.mongodb import init_mongodb
 
 # Create FastAPI app
 app = FastAPI(
@@ -22,6 +23,7 @@ app.add_middleware(
 # Include API routes
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(qa.router, prefix="/api/qa", tags=["Question Answering"])
+app.include_router(chats.router, prefix="/api/chats", tags=["Chat History"])
 
 @app.get("/")
 async def root():
@@ -33,6 +35,10 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
 
+@app.on_event("startup")
+async def startup_db_client():
+    """Initialize MongoDB connection on startup."""
+    await init_mongodb()
 
 if __name__ == "__main__":
     import uvicorn

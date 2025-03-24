@@ -7,7 +7,7 @@ import ChatSidebarLayout from '../components/ChatSidebarLayout';
 import { getDocuments } from '../services/documentService';
 import { askQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
-import { FiAlertCircle, FiMessageSquare, FiFileText, FiDatabase } from 'react-icons/fi';
+import { FiAlertCircle, FiMessageSquare, FiFileText, FiDatabase, FiLoader } from 'react-icons/fi';
 
 const QAPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -23,7 +23,7 @@ const QAPage = () => {
   // Current sources shown in the sidebar
   const [currentSources, setCurrentSources] = useState([]);
   
-  // Conversation state - use chatId from URL if available
+  // Conversation state using our MongoDB API
   const {
     messages,
     addUserMessage,
@@ -31,7 +31,8 @@ const QAPage = () => {
     clearConversation,
     loadChat,
     hasConversation,
-    currentChatId
+    currentChatId,
+    isLoading: isLoadingChat
   } = useConversation(null, chatIdFromUrl);
 
   useEffect(() => {
@@ -69,8 +70,8 @@ const QAPage = () => {
     setIsAsking(true);
     setQaError('');
     
-    // Add user message to conversation
-    addUserMessage(questionText);
+    // Add user message to conversation using MongoDB API
+    const userMessage = await addUserMessage(questionText);
     
     try {
       const response = await askQuestion(questionText);
@@ -79,7 +80,7 @@ const QAPage = () => {
       setCurrentSources(response.sources);
       
       // Add assistant response to conversation
-      addAssistantMessage(response.answer, response.sources);
+      await addAssistantMessage(response.answer, response.sources);
     } catch (err) {
       console.error('Error asking question:', err);
       setQaError('Failed to get an answer. Please try again.');
@@ -88,14 +89,17 @@ const QAPage = () => {
     }
   };
   
-  const handleNewChat = () => {
-    // Clear the conversation and reset sources
-    clearConversation();
+  const handleNewChat = async () => {
+    // Clear the conversation using MongoDB API
+    await clearConversation();
     setCurrentSources([]);
+    
+    // Remove chat ID from URL
+    setSearchParams({});
   };
   
-  const handleSelectChat = (chatId) => {
-    loadChat(chatId);
+  const handleSelectChat = async (chatId) => {
+    await loadChat(chatId);
     
     // Update URL to include chat ID
     setSearchParams({ chat: chatId });
@@ -113,12 +117,12 @@ const QAPage = () => {
 
   // Content to render inside the sidebar layout
   const renderContent = () => {
-    if (loading) {
+    if (loading || isLoadingChat) {
       return (
         <div className="h-full flex justify-center items-center">
           <div className="text-center animate-pulse-subtle">
-            <FiMessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-            <p className="text-gray-600">Loading your documents...</p>
+            <FiLoader className="h-12 w-12 mx-auto mb-4 text-gray-300 animate-spin" />
+            <p className="text-gray-600">Loading your documents and conversations...</p>
           </div>
         </div>
       );
@@ -159,7 +163,7 @@ const QAPage = () => {
           <>
             <ConversationHistory 
               messages={messages} 
-              onClearConversation={clearConversation} 
+              onClearConversation={handleNewChat} 
             />
             <QuestionForm 
               onSubmit={handleQuestionSubmit} 

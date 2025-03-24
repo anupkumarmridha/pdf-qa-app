@@ -1,32 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FiMessageSquare, FiTrash2, FiSearch, FiX, FiCalendar, FiFile, FiMoreVertical } from 'react-icons/fi';
-import { getAllChatSessions, deleteChatSession, ChatSession } from '../services/chatHistoryService';
+import { FiMessageSquare, FiTrash2, FiSearch, FiX, FiCalendar, FiFile, FiMoreVertical, FiLoader } from 'react-icons/fi';
+import { getChats, deleteChat, Chat } from '../services/chatService';
 
 interface ChatHistoryListProps {
   onSelectChat: (chatId: string) => void;
   currentChatId?: string | null;
   documentMode?: boolean;
+  onClose?: () => void;
 }
 
 const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
   onSelectChat,
   currentChatId = null,
-  documentMode = false
+  documentMode = false,
+  onClose
 }) => {
-  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [chatSessions, setChatSessions] = useState<Chat[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
     loadChatSessions();
     
-    // Set up periodic refresh for when chats are updated in other tabs
-    const intervalId = setInterval(loadChatSessions, 5000);
+    // Set up periodic refresh
+    const intervalId = setInterval(loadChatSessions, 30000);
     
     return () => clearInterval(intervalId);
-  }, []);
+  }, [documentMode]);
   
   // Handle clicks outside the dropdown menu
   useEffect(() => {
@@ -42,27 +46,40 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
     };
   }, []);
   
-  const loadChatSessions = () => {
-    const sessions = getAllChatSessions();
-    
-    // Filter sessions by document mode if needed
-    const filteredSessions = documentMode 
-      ? sessions.filter(session => !!session.documentId) 
-      : sessions.filter(session => !session.documentId);
+  const loadChatSessions = async () => {
+    setLoading(true);
+    try {
+      // Get chats from API - if in document mode, we'll filter by document ID
+      const chats = await getChats(documentMode ? undefined : null);
       
-    setChatSessions(filteredSessions);
+      // Filter locally based on documentMode if needed
+      const filteredChats = documentMode 
+        ? chats.filter(chat => !!chat.documentId) 
+        : chats.filter(chat => !chat.documentId);
+        
+      setChatSessions(filteredChats);
+      setError(null);
+    } catch (err) {
+      console.error("Error loading chat sessions:", err);
+      setError("Failed to load conversations. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
   
-  const handleDeleteChat = (e: React.MouseEvent, chatId: string) => {
+  const handleDeleteChat = async (e: React.MouseEvent, chatId: string) => {
     e.stopPropagation();
     e.preventDefault();
     
     if (window.confirm('Are you sure you want to delete this chat?')) {
-      deleteChatSession(chatId);
-      loadChatSessions();
-      
-      // Close the menu
-      setMenuOpenFor(null);
+      try {
+        await deleteChat(chatId);
+        // Remove from local state
+        setChatSessions(prev => prev.filter(chat => chat.id !== chatId));
+        setMenuOpenFor(null);
+      } catch (err) {
+        console.error("Error deleting chat:", err);
+      }
     }
   };
   
@@ -93,6 +110,35 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
       return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
   };
+  
+  if (loading && chatSessions.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500">
+        <FiLoader className="h-10 w-10 mb-4 text-gray-300 animate-spin" />
+        <h3 className="text-lg font-medium mb-2">Loading conversations</h3>
+        <p className="text-sm">
+          Please wait while we retrieve your conversation history.
+        </p>
+      </div>
+    );
+  }
+  
+  if (error && chatSessions.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center p-6 text-red-500">
+        <div className="bg-red-50 p-4 rounded-lg w-full max-w-md">
+          <h3 className="text-lg font-medium mb-2">Error loading conversations</h3>
+          <p className="text-sm mb-4">{error}</p>
+          <button 
+            onClick={loadChatSessions}
+            className="px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
   
   if (chatSessions.length === 0) {
     return (
@@ -146,7 +192,10 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
             {filteredSessions.map((chat) => (
               <li 
                 key={chat.id}
-                onClick={() => onSelectChat(chat.id)}
+                onClick={() => {
+                  onSelectChat(chat.id);
+                  if (onClose) onClose();
+                }}
                 className={`relative cursor-pointer rounded-lg p-3 transition-colors ${
                   chat.id === currentChatId 
                     ? 'bg-primary-100 text-primary-900' 
@@ -165,7 +214,7 @@ const ChatHistoryList: React.FC<ChatHistoryListProps> = ({
                     
                     <div className="mt-1 flex items-center text-xs text-gray-400">
                       <FiCalendar className="mr-1 h-3 w-3" />
-                      <span>{formatTime(chat.lastUpdated)}</span>
+                      <span>{formatTime(chat.updatedAt)}</span>
                       
                       {chat.documentId && (
                         <span className="ml-2 flex items-center">

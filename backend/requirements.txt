@@ -22,7 +22,10 @@ PyPDF2
 pandas
 numpy
 
-
+# MongoDB integration
+motor>=3.3.0
+pymongo>=4.5.0
+beanie>=1.23.0
 
 # AWS S3 integration
 boto3

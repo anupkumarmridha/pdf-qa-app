@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", 1000))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", 200))
     
+     # MongoDB Settings
+    MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://admin:password@localhost:27017")
+    MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "document_qa")
+    MONGODB_CHAT_COLLECTION: str = os.getenv("MONGODB_CHAT_COLLECTION", "chats")
+    MONGODB_MESSAGE_COLLECTION: str = os.getenv("MONGODB_MESSAGE_COLLECTION", "messages")
+    
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
