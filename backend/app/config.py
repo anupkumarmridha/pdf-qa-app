@@ -1,6 +1,7 @@
 import os
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -52,3 +53,7 @@ settings = Settings()
 # Ensure upload directory exists (for local storage)
 if not settings.USE_S3_STORAGE:
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
