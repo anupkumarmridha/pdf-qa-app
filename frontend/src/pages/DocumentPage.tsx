@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { FiArrowLeft, FiLoader, FiMessageSquare } from 'react-icons/fi';
 import DocumentSummary from '../components/DocumentSummary';
 import QuestionForm from '../components/QuestionForm';
 import ConversationHistory from '../components/ConversationHistory';
 import SourcesList from '../components/SourcesList';
-import NewChatButton from '../components/NewChatButton';
+import ChatSidebarLayout from '../components/ChatSidebarLayout';
 import { getDocument, checkDocumentStatus } from '../services/documentService';
 import { askDocumentQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
@@ -13,6 +13,10 @@ import { useConversation } from '../services/conversationService';
 const DocumentPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Get chat ID from URL if present
+  const chatIdFromUrl = searchParams.get('chat');
   
   const [document, setDocument] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,14 +28,16 @@ const DocumentPage = () => {
   // For displaying sources in the sidebar
   const [currentSources, setCurrentSources] = useState([]);
   
-  // Conversation state
+  // Conversation state - pass the chat ID if we have one
   const {
     messages,
     addUserMessage,
     addAssistantMessage,
     clearConversation,
-    hasConversation
-  } = useConversation(id);
+    loadChat,
+    hasConversation,
+    currentChatId
+  } = useConversation(id, chatIdFromUrl);
   
   // Add state for document processing
   const [isProcessing, setIsProcessing] = useState(false);
@@ -48,6 +54,13 @@ const DocumentPage = () => {
     };
   }, [id]);
   
+  // Update URL when chat ID changes
+  useEffect(() => {
+    if (currentChatId && currentChatId !== chatIdFromUrl) {
+      setSearchParams({ chat: currentChatId });
+    }
+  }, [currentChatId, chatIdFromUrl, setSearchParams]);
+  
   // Effect to load the most recent sources when the component mounts
   useEffect(() => {
     if (messages.length > 0) {
@@ -59,7 +72,7 @@ const DocumentPage = () => {
         }
       }
     }
-  }, []);
+  }, [messages]);
 
   const checkDocumentProcessingStatus = (doc) => {
     if (doc && doc.status === "processing") {
@@ -140,53 +153,121 @@ const DocumentPage = () => {
     clearConversation();
     setCurrentSources([]);
   };
+  
+  const handleSelectChat = (chatId) => {
+    loadChat(chatId);
+    
+    // Reflect the chat ID in the URL
+    setSearchParams({ chat: chatId });
+  };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-screen-minus-nav">
-        <FiLoader className="animate-spin h-8 w-8 text-primary-500 mr-2" />
-        <span className="text-xl">Loading document...</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center">
-        <div className="bg-red-50 text-red-600 p-4 rounded-md mb-4">
-          <p>{error}</p>
+  // Render content for inside the chat sidebar layout
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <div className="h-full flex justify-center items-center">
+          <div className="text-center animate-pulse-subtle">
+            <FiLoader className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <p className="text-gray-600">Loading document...</p>
+          </div>
         </div>
-        <button
-          onClick={() => navigate('/')}
-          className="btn btn-primary inline-flex items-center"
-        >
-          <FiArrowLeft className="mr-2" />
-          Back to Home
-        </button>
-      </div>
-    );
-  }
-
-  if (!document) {
-    return (
-      <div className="text-center">
-        <div className="bg-yellow-50 text-yellow-700 p-4 rounded-md mb-4">
-          <p>Document not found.</p>
+      );
+    }
+    
+    if (error) {
+      return (
+        <div className="text-center">
+          <div className="bg-red-50 text-red-600 p-4 rounded-md mb-4">
+            <p>{error}</p>
+          </div>
+          <button
+            onClick={() => navigate('/')}
+            className="btn btn-primary inline-flex items-center"
+          >
+            <FiArrowLeft className="mr-2" />
+            Back to Home
+          </button>
         </div>
-        <button
-          onClick={() => navigate('/')}
-          className="btn btn-primary inline-flex items-center"
-        >
-          <FiArrowLeft className="mr-2" />
-          Back to Home
-        </button>
+      );
+    }
+    
+    if (!document) {
+      return (
+        <div className="text-center">
+          <div className="bg-yellow-50 text-yellow-700 p-4 rounded-md mb-4">
+            <p>Document not found.</p>
+          </div>
+          <button
+            onClick={() => navigate('/')}
+            className="btn btn-primary inline-flex items-center"
+          >
+            <FiArrowLeft className="mr-2" />
+            Back to Home
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6 max-w-4xl mx-auto w-full">
+        {isProcessing && (
+          <div className="bg-blue-50 p-4 rounded-lg flex items-center">
+            <FiLoader className="animate-spin h-5 w-5 text-blue-600 mr-3" />
+            <p className="text-blue-700">
+              This document is being processed. 
+              Search functionality will be available once processing is complete.
+            </p>
+          </div>
+        )}
+        
+        {/* Conversation section */}
+        {hasConversation ? (
+          <>
+            <ConversationHistory 
+              messages={messages} 
+              onClearConversation={clearConversation} 
+            />
+            <QuestionForm 
+              onSubmit={handleQuestionSubmit} 
+              documentId={id}
+              isLoading={isAsking}
+              disabled={isProcessing}
+              hasConversationHistory={hasConversation}
+              isFollowUpQuestion={hasConversation}
+            />
+          </>
+        ) : (
+          <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <FiMessageSquare className="h-8 w-8 text-primary-600" />
+              </div>
+              <h2 className="text-2xl font-semibold text-gray-800 mb-2">Ask About This Document</h2>
+              <p className="text-gray-600 mb-6 max-w-lg mx-auto">
+                Ask questions about "{document.filename}" and get AI-powered answers based on the document's content.
+              </p>
+              <QuestionForm 
+                onSubmit={handleQuestionSubmit} 
+                documentId={id}
+                isLoading={isAsking}
+                disabled={isProcessing}
+              />
+            </div>
+          </div>
+        )}
+        
+        {qaError && (
+          <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 animate-fade-in">
+            <p>{qaError}</p>
+          </div>
+        )}
       </div>
     );
-  }
+  };
 
   return (
-    <div>
-      <div className="mb-6">
+    <div className="h-[calc(100vh-120px)] flex flex-col">
+      <div className="py-4 flex items-center">
         <button
           onClick={() => navigate('/')}
           className="inline-flex items-center text-gray-600 hover:text-gray-900"
@@ -194,81 +275,24 @@ const DocumentPage = () => {
           <FiArrowLeft className="mr-1" />
           Back to Documents
         </button>
+        <h1 className="text-xl font-semibold text-gray-800 ml-4">{document?.filename || 'Document'}</h1>
       </div>
-
-      {isProcessing && (
-        <div className="mb-6 bg-blue-50 p-4 rounded-lg flex items-center">
-          <FiLoader className="animate-spin h-5 w-5 text-blue-600 mr-3" />
-          <p className="text-blue-700">
-            This document is being processed. 
-            Search functionality will be available once processing is complete.
-          </p>
-        </div>
-      )}
-
-      <div className="grid gap-8 lg:grid-cols-4">
-        {/* Main conversation area - takes up more space */}
-        <div className="lg:col-span-3 space-y-4">
-          {/* Only show conversation history when there are messages */}
-          {hasConversation ? (
-            <>
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="text-lg font-semibold text-gray-800">
-                  Conversation about: {document.filename}
-                </h2>
-                <NewChatButton onClick={handleNewChat} />
-              </div>
-              <ConversationHistory 
-                messages={messages} 
-                onClearConversation={clearConversation} 
-              />
-              <QuestionForm 
-                onSubmit={handleQuestionSubmit} 
-                documentId={id}
-                isLoading={isAsking}
-                disabled={isProcessing}
-                hasConversationHistory={hasConversation}
-                isFollowUpQuestion={hasConversation}
-              />
-            </>
-          ) : (
-            <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <FiMessageSquare className="h-8 w-8 text-primary-600" />
-                </div>
-                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Ask About This Document</h2>
-                <p className="text-gray-600 mb-6 max-w-lg mx-auto">
-                  Ask questions about "{document.filename}" and get AI-powered answers based on the document's content.
-                </p>
-                <QuestionForm 
-                  onSubmit={handleQuestionSubmit} 
-                  documentId={id}
-                  isLoading={isAsking}
-                  disabled={isProcessing}
-                />
-              </div>
-            </div>
-          )}
-          
-          {qaError && (
-            <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 animate-fade-in">
-              <p>{qaError}</p>
-            </div>
-          )}
-        </div>
-        
-        {/* Side panel for document info and sources */}
-        <div className="space-y-6">
-          <DocumentSummary document={document} />
-          
-          {currentSources.length > 0 && (
-            <SourcesList sources={currentSources} />
-          )}
-        </div>
+      
+      <div className="flex-grow bg-white border border-gray-200 rounded-lg shadow-sm">
+        <ChatSidebarLayout
+          currentChatId={currentChatId}
+          onSelectChat={handleSelectChat}
+          onNewChat={handleNewChat}
+          title={`${document?.filename || 'Document'} Chats`}
+          documentMode={true}
+          rightSidebar={currentSources.length > 0 ? <SourcesList sources={currentSources} /> : <DocumentSummary document={document} />}
+          rightSidebarTitle={currentSources.length > 0 ? "Sources" : "Document Info"}
+        >
+          {renderContent()}
+        </ChatSidebarLayout>
       </div>
     </div>
   );
-};
+}
 
 export default DocumentPage;

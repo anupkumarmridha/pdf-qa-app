@@ -1,7 +1,17 @@
 import React from 'react';
-import { FiFileText, FiDatabase, FiCalendar, FiUser, FiBookOpen } from 'react-icons/fi';
+import { FiFileText, FiDatabase, FiCalendar, FiUser, FiBookOpen, FiLoader } from 'react-icons/fi';
 
 const DocumentSummary = ({ document }) => {
+  // Add null check to prevent destructuring errors
+  if (!document) {
+    return (
+      <div className="card flex justify-center items-center p-8">
+        <FiLoader className="animate-spin h-6 w-6 text-primary-500 mr-2" />
+        <span>Loading document information...</span>
+      </div>
+    );
+  }
+
   const { id, filename, type, summary, metadata } = document;
 
   const getDocumentIcon = () => {
