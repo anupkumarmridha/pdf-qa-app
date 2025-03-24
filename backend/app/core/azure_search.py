@@ -33,7 +33,8 @@ class SchemaConfig:
         content_field: str = "content",
         content_vector_field: str = "content_vector",
         metadata_field: str = "metadata",
-        vector_dimensions: int = 3072,  # Default for text-embedding-ada-002
+        document_id_field: str = "document_id",
+        vector_dimensions: int = 3072,
         vector_search_profile_name: str = "my-vector-config",
         hnsw_parameters: Optional[HnswParameters] = None,
     ):
@@ -41,6 +42,7 @@ class SchemaConfig:
         self.content_field = content_field
         self.content_vector_field = content_vector_field
         self.metadata_field = metadata_field
+        self.document_id_field = document_id_field
         self.vector_dimensions = vector_dimensions
         self.vector_search_profile_name = vector_search_profile_name
         self.hnsw_parameters = hnsw_parameters or HnswParameters(
@@ -108,6 +110,11 @@ class AzureSearchService:
                 searchable=True,
                 filterable=True,
             ),
+            SimpleField(
+                name=self.schema_config.document_id_field,
+                type=SearchFieldDataType.String,
+                filterable=True,
+            ),
         ]
 
         vector_search = VectorSearch(
@@ -151,15 +158,19 @@ class AzureSearchService:
             if not chunk_id:
                 logger.warning(f"Chunk missing ID: {chunk}")
                 continue
+            
+            chunk_metadata = chunk.get("metadata", {})
+            document_id = chunk_metadata.get("document_id", None)
+            if document_id is None:
+                raise ValueError("Metadata must contain 'document_id'")
 
             embedding = self.embeddings.embed_query(content)
             document = {
-                self.schema_config.id_field: str(chunk_id),  # Ensure string type for ID
+                self.schema_config.id_field: str(chunk_id),
                 self.schema_config.content_field: content,
                 self.schema_config.content_vector_field: embedding,
-                self.schema_config.metadata_field: json.dumps(
-                    chunk.get("metadata", {})
-                ),
+                self.schema_config.metadata_field: json.dumps(chunk_metadata),
+                self.schema_config.document_id_field: document_id,
             }
             documents.append(document)
 
@@ -168,7 +179,6 @@ class AzureSearchService:
             return
 
         # print(documents)
-        # Upload in batches of 100
         batch_size = 100
         for i in range(0, len(documents), batch_size):
             batch = documents[i : i + batch_size]
@@ -195,6 +205,7 @@ class AzureSearchService:
                     self.schema_config.id_field,
                     self.schema_config.content_field,
                     self.schema_config.metadata_field,
+                    self.schema_config.document_id_field,
                 ],
             )
 
@@ -203,6 +214,7 @@ class AzureSearchService:
                     "id": result[self.schema_config.id_field],
                     "content": result[self.schema_config.content_field],
                     "metadata": json.loads(result.get(self.schema_config.metadata_field, "{}")),
+                    "document_id": result.get(self.schema_config.document_id_field, None),
                     "score": result.get("@search.score", 0.0),
                 }
                 for result in results
@@ -211,13 +223,14 @@ class AzureSearchService:
             logger.error(f"Vector search failed: {e}")
             raise
 
-    def create_langchain_retriever(self, top_k: int = 5) -> AzureAISearchRetriever:
-        """Create a LangChain retriever for Azure AI Search."""
+    def create_langchain_retriever(self, top_k: int = 5, document_id: str = None) -> AzureAISearchRetriever:
+        filter_str = f"{self.schema_config.document_id_field} eq '{document_id}'" if document_id else None
         retriever = AzureAISearchRetriever(
             content_key=self.schema_config.content_field,
             top_k=top_k,
             index_name=self.index_name,
             service_name=settings.AZURE_SEARCH_SERVICE,
             api_key=settings.AZURE_SEARCH_KEY,
+            filter=filter_str,
         )
         return retriever

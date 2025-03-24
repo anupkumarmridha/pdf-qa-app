@@ -38,36 +38,15 @@ async def ask_question(question_request: QuestionRequest):
 
 @router.get("/documents/{document_id}/ask", response_model=AnswerResponse)
 async def ask_document_question(document_id: str, question: str):
-    """
-    Answer a question about a specific document.
-    """
     try:
-        # This implementation doesn't filter by document_id directly
-        # In a real application, you would modify the retriever to filter by document_id
-        # For now, we'll use the general QA service
-        
-        # Check that the question is not empty
         if not question or question.strip() == "":
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
-        # Get answer from QA service
-        answer, sources = qa_service.answer_question(question)
-        print(answer)
-        # Filter sources to only include those from this document
-        # (This is a workaround - in a real app, you'd filter at the retrieval stage)
-        filtered_sources = [
-            source for source in sources 
-            if source["metadata"].get("document_id") == document_id
-        ]
+        answer, sources = qa_service.answer_document_question(question, document_id)
         
-        # If no sources from this document were used, return a warning
-        if not filtered_sources:
-            answer = "I couldn't find information about this in the specified document."
-            
-        # Convert sources to the expected format
         formatted_sources = [
             SourceDocument(text=source["text"], metadata=source["metadata"])
-            for source in filtered_sources
+            for source in sources
         ]
         
         return AnswerResponse(answer=answer, sources=formatted_sources)
