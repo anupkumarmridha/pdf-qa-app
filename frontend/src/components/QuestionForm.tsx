@@ -1,29 +1,43 @@
-import React, { useState, useEffect } from 'react';
-import { FiSend, FiHelpCircle, FiMessageSquare } from 'react-icons/fi';
+import React, { useState, useEffect, useRef } from 'react';
+import { FiSend, FiMessageSquare, FiCornerDownRight, FiChevronDown, FiChevronUp, FiPaperclip, FiHelpCircle, FiX } from 'react-icons/fi';
 
 interface QuestionFormProps {
   onSubmit: (question: string) => void;
   documentId?: string | null;
   isLoading?: boolean;
   disabled?: boolean;
+  hasConversationHistory?: boolean;
+  isFollowUpQuestion?: boolean;
 }
 
 const QuestionForm: React.FC<QuestionFormProps> = ({ 
   onSubmit, 
   documentId = null, 
   isLoading = false, 
-  disabled = false 
+  disabled = false,
+  hasConversationHistory = false,
+  isFollowUpQuestion = false
 }) => {
   const [question, setQuestion] = useState('');
   const [error, setError] = useState('');
   const [charCount, setCharCount] = useState(0);
   const [isFocused, setIsFocused] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setCharCount(question.length);
   }, [question]);
 
-  const handleSubmit = (e: { preventDefault: () => void; }) => {
+  // Auto-resize textarea based on content
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px';
+    }
+  }, [question]);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!question.trim()) {
@@ -33,146 +47,163 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
 
     setError('');
     onSubmit(question);
+    setQuestion(''); // Clear the input after submission
+    
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
   };
 
-  const handleChange = (e: { target: { value: React.SetStateAction<string>; }; }) => {
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setQuestion(e.target.value);
     if (error) setError('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Submit on Enter (without Shift)
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
   };
 
   const handleFocus = () => setIsFocused(true);
   const handleBlur = () => setIsFocused(false);
 
-  // Example questions
-  const exampleQuestions = [
+  // Example follow-up questions (shown when there's conversation history)
+  const followUpExamples = [
+    "Can you explain that in more detail?",
+    "Why is that important?",
+    "How does that relate to the previous point?",
+    "Can you provide more examples?"
+  ];
+
+  const initialQuestions = [
     "What are the key findings in this document?",
-    "Can you summarize the main points?",
+    "Summarize the main points",
     "What statistics are mentioned?",
     "What methodology was used?"
   ];
 
-  const handleExampleClick = (exampleQuestion:string) => {
+  const handleExampleClick = (exampleQuestion: string) => {
     setQuestion(exampleQuestion);
     setError('');
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
   };
 
   return (
-    <div className={`bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden transition-all duration-300 hover:shadow-xl ${disabled ? 'opacity-75' : ''}`}>
-      <div className="bg-gradient-to-r from-primary-600 to-primary-700 px-6 py-4 text-white">
-        <div className="flex items-center">
-          <FiMessageSquare className="h-6 w-6 mr-3" />
-          <h2 className="text-xl font-bold">
-            {documentId
-              ? 'Ask About This Document'
-              : 'Ask About Your Documents'}
-          </h2>
+    <div className={`relative ${isFollowUpQuestion ? 'mt-6' : 'mt-2'}`}>
+      {/* Suggestions panel */}
+      {showSuggestions && (
+        <div className="absolute bottom-full w-full mb-2 bg-white rounded-lg shadow-lg border border-gray-200 p-3 z-10 animate-fade-in">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="text-sm font-medium text-gray-700">Suggested questions</h3>
+            <button 
+              onClick={() => setShowSuggestions(false)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <FiX size={16} />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(isFollowUpQuestion ? followUpExamples : initialQuestions).map((example, index) => (
+              <button
+                key={index}
+                onClick={() => handleExampleClick(example)}
+                className="text-sm text-left bg-gray-50 hover:bg-gray-100 text-gray-700 px-3 py-2 rounded-md transition-colors duration-200"
+              >
+                {example}
+              </button>
+            ))}
+          </div>
         </div>
-        <p className="text-primary-100 mt-1 text-sm">
-          Powered by AI to find the most relevant information
-        </p>
-      </div>
-
-      <div className="p-6">
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <div className="relative">
+      )}
+      
+      {/* Main form */}
+      <div className={`bg-white rounded-xl shadow-md border ${isFollowUpQuestion ? 'border-gray-200' : 'border-gray-300'} overflow-hidden transition-all duration-300`}>
+        <form onSubmit={handleSubmit} className="relative">
+          <div className="flex items-end">
+            <div className="relative flex-grow">
               <textarea
+                ref={textareaRef}
                 id="question"
-                name="question"
-                rows={4}
-                className={`w-full px-4 py-3 rounded-lg border ${error ? 'border-red-400 bg-red-50' :
-                    isFocused ? 'border-primary-400 bg-primary-50 shadow-sm' : 'border-gray-300'
-                  } focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 resize-none placeholder-gray-400`}
-                placeholder="What would you like to know about your documents?"
+                rows={1}
+                className={`w-full pl-4 pr-24 py-4 resize-none overflow-hidden border-0 focus:ring-0 focus:outline-none text-gray-700 placeholder-gray-400 ${isLoading || disabled ? 'bg-gray-50' : 'bg-white'}`}
+                placeholder={isFollowUpQuestion ? 
+                  "Ask a follow-up question..." : 
+                  "Ask a question about your document..."}
                 value={question}
                 onChange={handleChange}
+                onKeyDown={handleKeyDown}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 disabled={isLoading || disabled}
-              ></textarea>
-
-              <div className="absolute bottom-3 right-3 text-xs text-gray-400">
-                {charCount} characters
-              </div>
-            </div>
-
-            {error && (
-              <div className="mt-2 flex items-center text-red-500 text-sm">
-                <FiHelpCircle className="mr-1" />
-                <p>{error}</p>
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-between items-center">
-            <div className="hidden sm:block">
-              <p className="text-xs text-gray-500 mb-1">Try asking:</p>
-              <div className="flex flex-wrap gap-2">
-                {exampleQuestions.map((q, index) => (
-                  <button
-                    key={index}
-                    type="button"
-                    onClick={() => handleExampleClick(q)}
-                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded transition-colors duration-200"
-                    disabled={isLoading || disabled}
-                  >
-                    {q.length > 20 ? q.substring(0, 20) + '...' : q}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className={`group relative px-6 py-3 rounded-lg font-medium flex items-center justify-center min-w-[160px] overflow-hidden ${isLoading || disabled
-                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-primary-600 to-primary-700 text-white hover:from-primary-700 hover:to-primary-800 shadow-md hover:shadow-lg'
-                } transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2`}
-              disabled={isLoading || disabled}
-            >
-              {/* Background animation */}
-              {!isLoading && !disabled && (
-                <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-primary-600/0 via-primary-400/30 to-primary-600/0 -translate-x-full group-hover:animate-shimmer" />
+                style={{ minHeight: '56px' }}
+              />
+              
+              {/* Character count */}
+              {question.length > 0 && (
+                <div className="absolute right-20 bottom-4 text-xs text-gray-400">
+                  {charCount} / 4000
+                </div>
               )}
-
-              {/* Button content with conditional states */}
-              <span className="relative flex items-center justify-center">
+            </div>
+            
+            {/* Actions toolbar */}
+            <div className="flex items-center pr-2">
+              <button
+                type="button"
+                className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                onClick={() => setShowSuggestions(!showSuggestions)}
+                title="Show suggestions"
+              >
+                {showSuggestions ? <FiChevronDown size={18} /> : <FiChevronUp size={18} />}
+              </button>
+              
+              <button
+                type="submit"
+                disabled={isLoading || disabled || !question.trim()}
+                className={`p-2 rounded-full ml-1 ${
+                  isLoading || disabled || !question.trim()
+                    ? 'text-gray-300 cursor-not-allowed'
+                    : 'text-primary-600 hover:text-primary-700 hover:bg-primary-50'
+                } transition-colors`}
+                title="Send message"
+              >
                 {isLoading ? (
-                  <>
-                    <span className="absolute flex items-center justify-center w-5 h-5">
-                      <span className="absolute w-full h-full border-2 border-t-transparent border-primary-200 rounded-full animate-spin"></span>
-                      <span className="absolute w-3 h-3 border-2 border-t-transparent border-white rounded-full animate-spin-reverse"></span>
-                    </span>
-                    <span className="ml-7 font-semibold tracking-wide">Thinking...</span>
-                  </>
-                ) : disabled ? (
-                  <span className="font-semibold tracking-wide">
-                    Processing Document...
-                  </span>
+                  <div className="w-5 h-5 relative">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-600"></div>
+                  </div>
                 ) : (
-                  <>
-                    <span className="relative flex items-center justify-center w-5 h-5 mr-2 overflow-hidden">
-                      <FiSend className="text-white group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform duration-300" />
-                    </span>
-                    <span className="font-semibold tracking-wide group-hover:tracking-wider transition-all duration-300">
-                      Ask Question
-                    </span>
-                  </>
+                  <FiSend size={18} />
                 )}
-              </span>
-
-              {/* Bottom border animation */}
-              {!isLoading && !disabled && (
-                <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-white group-hover:w-full transition-all duration-300 ease-in-out" />
-              )}
-            </button>
+              </button>
+            </div>
           </div>
         </form>
-
-        <div className={`mt-6 p-4 border-l-4 border-primary-300 bg-primary-50 rounded-r text-sm transition-opacity duration-300 ${isLoading || disabled ? 'opacity-50' : 'opacity-100'}`}>
-          <p className="text-gray-700">
-            <span className="font-medium">Pro tip:</span> Ask specific questions about {documentId ? 'this document' : 'your documents'} to get the most accurate answers. The AI will search through your content to find relevant information.
-          </p>
+        
+        {/* Error message */}
+        {error && (
+          <div className="px-4 py-2 bg-red-50 text-red-500 text-sm flex items-center">
+            <FiHelpCircle className="mr-1" />
+            <p>{error}</p>
+          </div>
+        )}
+        
+        {/* Helper text */}
+        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+          <span>
+            <span className="font-medium">Tip:</span> Press Enter to send, Shift+Enter for new line
+          </span>
+          {isFollowUpQuestion && (
+            <span className="flex items-center text-primary-600">
+              <FiCornerDownRight className="mr-1" size={12} />
+              Follow-up question
+            </span>
+          )}
         </div>
       </div>
     </div>

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { FiArrowLeft, FiLoader } from 'react-icons/fi';
+import { FiArrowLeft, FiLoader, FiMessageSquare } from 'react-icons/fi';
 import DocumentSummary from '../components/DocumentSummary';
 import QuestionForm from '../components/QuestionForm';
-import AnswerDisplay from '../components/AnswerDisplay';
+import ConversationHistory from '../components/ConversationHistory';
+import SourcesList from '../components/SourcesList';
 import { getDocument, checkDocumentStatus } from '../services/documentService';
 import { askDocumentQuestion } from '../services/qaService';
+import { useConversation } from '../services/conversationService';
 
 const DocumentPage = () => {
   const { id } = useParams();
@@ -15,11 +17,20 @@ const DocumentPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState('');
-  const [sources, setSources] = useState([]);
   const [isAsking, setIsAsking] = useState(false);
   const [qaError, setQaError] = useState('');
+  
+  // For displaying sources in the sidebar
+  const [currentSources, setCurrentSources] = useState([]);
+  
+  // Conversation state
+  const {
+    messages,
+    addUserMessage,
+    addAssistantMessage,
+    clearConversation,
+    hasConversation
+  } = useConversation(id);
   
   // Add state for document processing
   const [isProcessing, setIsProcessing] = useState(false);
@@ -35,6 +46,19 @@ const DocumentPage = () => {
       }
     };
   }, [id]);
+  
+  // Effect to load the most recent sources when the component mounts
+  useEffect(() => {
+    if (messages.length > 0) {
+      // Find the last assistant message with sources
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant' && messages[i].sources && messages[i].sources.length > 0) {
+          setCurrentSources(messages[i].sources);
+          break;
+        }
+      }
+    }
+  }, []);
 
   const checkDocumentProcessingStatus = (doc) => {
     if (doc && doc.status === "processing") {
@@ -88,14 +112,20 @@ const DocumentPage = () => {
     // Don't allow questions if document is still processing
     if (isProcessing) return;
     
-    setQuestion(questionText);
     setIsAsking(true);
     setQaError('');
     
+    // Add user message to conversation
+    addUserMessage(questionText);
+    
     try {
       const response = await askDocumentQuestion(id, questionText);
-      setAnswer(response.answer);
-      setSources(response.sources);
+      
+      // Update current sources for the sidebar
+      setCurrentSources(response.sources);
+      
+      // Add assistant response to conversation
+      addAssistantMessage(response.answer, response.sources);
     } catch (err) {
       console.error('Error asking question:', err);
       setQaError('Failed to get an answer. Please try again.');
@@ -160,40 +190,70 @@ const DocumentPage = () => {
       </div>
 
       {isProcessing && (
-        <div className="mb-6 bg-blue-50 p-4 rounded-md flex items-center">
+        <div className="mb-6 bg-blue-50 p-4 rounded-lg flex items-center">
           <FiLoader className="animate-spin h-5 w-5 text-blue-600 mr-3" />
           <p className="text-blue-700">
-            This document is still being processed. 
-            Full content and search functionality will be available once processing is complete.
+            This document is being processed. 
+            Search functionality will be available once processing is complete.
           </p>
         </div>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2 mb-6">
-        <DocumentSummary document={document} />
-        <QuestionForm 
-          onSubmit={handleQuestionSubmit} 
-          documentId={id}
-          isLoading={isAsking}
-          disabled={isProcessing}
-        />
+      <div className="grid gap-8 lg:grid-cols-4">
+        {/* Main conversation area - takes up more space */}
+        <div className="lg:col-span-3 space-y-4">
+          {/* Only show conversation history when there are messages */}
+          {hasConversation ? (
+            <>
+              <ConversationHistory 
+                messages={messages} 
+                onClearConversation={clearConversation} 
+              />
+              <QuestionForm 
+                onSubmit={handleQuestionSubmit} 
+                documentId={id}
+                isLoading={isAsking}
+                disabled={isProcessing}
+                hasConversationHistory={hasConversation}
+                isFollowUpQuestion={hasConversation}
+              />
+            </>
+          ) : (
+            <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
+              <div className="p-8 text-center">
+                <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <FiMessageSquare className="h-8 w-8 text-primary-600" />
+                </div>
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Ask About This Document</h2>
+                <p className="text-gray-600 mb-6 max-w-lg mx-auto">
+                  Ask questions about "{document.filename}" and get AI-powered answers based on the document's content.
+                </p>
+                <QuestionForm 
+                  onSubmit={handleQuestionSubmit} 
+                  documentId={id}
+                  isLoading={isAsking}
+                  disabled={isProcessing}
+                />
+              </div>
+            </div>
+          )}
+          
+          {qaError && (
+            <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 animate-fade-in">
+              <p>{qaError}</p>
+            </div>
+          )}
+        </div>
+        
+        {/* Side panel for document info and sources */}
+        <div className="space-y-6">
+          <DocumentSummary document={document} />
+          
+          {currentSources.length > 0 && (
+            <SourcesList sources={currentSources} />
+          )}
+        </div>
       </div>
-
-      {qaError && (
-        <div className="bg-red-50 text-red-600 p-4 rounded-md mb-6">
-          <p>{qaError}</p>
-        </div>
-      )}
-
-      {(answer || isAsking) && (
-        <div className="mb-6">
-          <AnswerDisplay 
-            question={question}
-            answer={answer}
-            sources={sources}
-          />
-        </div>
-      )}
     </div>
   );
 };

@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { FiFileText, FiDatabase, FiClipboard, FiCheck } from 'react-icons/fi';
+import { FiFileText, FiDatabase, FiClipboard, FiCheck, FiExternalLink, FiChevronDown, FiChevronUp } from 'react-icons/fi';
 
-const SourcesList = ({ sources }) => {
-  const [expandedIndex, setExpandedIndex] = useState(null);
-  const [copiedIndex, setCopiedIndex] = useState(null);
+interface SourcesListProps {
+  sources: any[];
+}
 
-  const toggleExpand = (index) => {
+const SourcesList: React.FC<SourcesListProps> = ({ sources }) => {
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const toggleExpand = (index: number) => {
     if (expandedIndex === index) {
       setExpandedIndex(null);
     } else {
@@ -13,7 +17,7 @@ const SourcesList = ({ sources }) => {
     }
   };
 
-  const copyToClipboard = (text, index, event) => {
+  const copyToClipboard = (text: string, index: number, event: React.MouseEvent) => {
     event.stopPropagation();
     navigator.clipboard.writeText(text);
     setCopiedIndex(index);
@@ -22,54 +26,96 @@ const SourcesList = ({ sources }) => {
 
   if (!sources || sources.length === 0) {
     return (
-      <div className="card p-6 text-center text-gray-500">
-        No sources available.
+      <div className="bg-white shadow-sm rounded-lg border border-gray-200 p-6 text-center">
+        <p className="text-gray-500">No sources available for this response.</p>
       </div>
     );
   }
 
   return (
-    <div className="card">
-      <h2 className="text-xl font-semibold mb-4">Source Documents</h2>
-      <div className="space-y-3">
+    <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+        <h2 className="text-lg font-semibold text-gray-800 flex items-center">
+          <FiExternalLink className="mr-2 text-primary-600" />
+          Sources
+        </h2>
+        <p className="text-sm text-gray-600 mt-1">
+          References used to generate the response
+        </p>
+      </div>
+      
+      <div className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
         {sources.map((source, index) => (
           <div 
             key={index}
-            className={`border rounded-md overflow-hidden ${
-              expandedIndex === index ? 'border-primary-300' : 'border-gray-200'
-            }`}
+            className="transition-all duration-200"
           >
             <div 
-              className={`flex justify-between items-center p-3 cursor-pointer ${
-                expandedIndex === index ? 'bg-primary-50' : 'bg-gray-50'
+              className={`flex justify-between items-center p-3 cursor-pointer hover:bg-gray-50 ${
+                expandedIndex === index ? 'bg-gray-50' : ''
               }`}
               onClick={() => toggleExpand(index)}
             >
               <div className="flex items-center">
-                {source.metadata.type === 'pdf' ? (
-                  <FiFileText className="text-red-500 mr-2" />
+                {source.metadata?.type === 'pdf' ? (
+                  <FiFileText className="text-red-500 mr-2 flex-shrink-0" />
                 ) : (
-                  <FiDatabase className="text-green-500 mr-2" />
+                  <FiDatabase className="text-green-500 mr-2 flex-shrink-0" />
                 )}
-                <span className="font-medium text-gray-700">
-                  {source.metadata.source || `Source ${index + 1}`}
-                </span>
+                <div className="flex flex-col">
+                  <span className="font-medium text-gray-700 line-clamp-1">
+                    {source.metadata?.source || `Source ${index + 1}`}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {expandedIndex === index ? 'Click to collapse' : 'Click to expand'}
+                  </span>
+                </div>
               </div>
-              <button
-                onClick={(e) => copyToClipboard(source.text, index, e)}
-                className="text-gray-400 hover:text-gray-600"
-                aria-label="Copy text"
-              >
-                {copiedIndex === index ? (
-                  <FiCheck className="h-4 w-4 text-green-500" />
+              
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={(e) => copyToClipboard(source.text, index, e)}
+                  className="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100"
+                  aria-label="Copy text"
+                  title="Copy text"
+                >
+                  {copiedIndex === index ? (
+                    <FiCheck className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <FiClipboard className="h-4 w-4" />
+                  )}
+                </button>
+                
+                {expandedIndex === index ? (
+                  <FiChevronUp className="text-gray-400" />
                 ) : (
-                  <FiClipboard className="h-4 w-4" />
+                  <FiChevronDown className="text-gray-400" />
                 )}
-              </button>
+              </div>
             </div>
+            
             {expandedIndex === index && (
-              <div className="p-3 border-t border-gray-200 whitespace-pre-line text-gray-700 text-sm">
-                {source.text}
+              <div className="p-3 bg-gray-50 border-t border-gray-100 animate-fade-in">
+                <div className="text-sm bg-white border border-gray-200 rounded-md p-3 whitespace-pre-line text-gray-700 max-h-80 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+                  {source.text}
+                </div>
+                
+                {/* Metadata section */}
+                {source.metadata && Object.keys(source.metadata).length > 0 && (
+                  <div className="mt-3 text-xs text-gray-500">
+                    <div className="font-medium mb-1">Document metadata:</div>
+                    <div className="bg-gray-100 p-2 rounded">
+                      {Object.entries(source.metadata).map(([key, value]) => (
+                        key !== 'text' && (
+                          <div key={key} className="grid grid-cols-3 mb-1">
+                            <span className="font-medium">{key}:</span>
+                            <span className="col-span-2">{String(value)}</span>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
