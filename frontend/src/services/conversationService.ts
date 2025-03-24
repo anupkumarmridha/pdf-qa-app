@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import * as chatService from './chatService';
+import { clearQAMemory } from './qaService';
 
 export interface Message {
   id?: string;
@@ -64,7 +65,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
     setError(null);
     
     try {
-      // If no current chat ID, create a new chat
+      // If no current chat ID, create a new chat first
       if (!currentChatId) {
         const newChat = await chatService.createChat(
           content.length > 30 ? content.substring(0, 27) + '...' : content,
@@ -85,6 +86,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
     } catch (err) {
       console.error('Error adding user message:', err);
       setError('Failed to send message');
+      
       // Still add the message to the UI to maintain consistency
       const tempMessage: Message = {
         id: `temp-${Date.now()}`,
@@ -104,17 +106,29 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
     setError(null);
     
     try {
+      // Handle case where there's no active chat - create one first
       if (!currentChatId) {
-        console.error('Cannot add assistant message - no active chat');
-        return null;
+        // First create a new chat with a default title
+        const newChat = await chatService.createChat(
+          "New conversation",
+          documentId || undefined
+        );
+        setCurrentChatId(newChat.id);
+        
+        // Then add the assistant message
+        const message = await chatService.addMessage(newChat.id, 'assistant', content, sources);
+        setMessages(prev => [...prev, message]);
+        return message;
+      } else {
+        // Normal case - add to existing chat
+        const message = await chatService.addMessage(currentChatId, 'assistant', content, sources);
+        setMessages(prev => [...prev, message]);
+        return message;
       }
-      
-      const message = await chatService.addMessage(currentChatId, 'assistant', content, sources);
-      setMessages(prev => [...prev, message]);
-      return message;
     } catch (err) {
       console.error('Error adding assistant message:', err);
       setError('Failed to receive response');
+      
       // Still add the message to the UI to maintain consistency
       const tempMessage: Message = {
         id: `temp-${Date.now()}`,
@@ -129,12 +143,15 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
   };
 
   /**
-   * Clear the entire conversation history
+   * Clear the entire conversation history and QA memory
    */
-  const clearConversation = async () => {
+  const clearConversation = useCallback(async () => {
     setError(null);
     
     try {
+      // Clear the QA service memory for proper synchronization
+      await clearQAMemory();
+      
       if (currentChatId) {
         await chatService.clearMessages(currentChatId);
         setMessages([]);
@@ -143,12 +160,22 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       console.error('Error clearing conversation:', err);
       setError('Failed to clear conversation');
     }
-  };
+  }, [currentChatId]);
 
   /**
    * Load a specific chat by ID
    */
   const loadChat = async (chatId: string) => {
+    // If switching chats, clear QA memory to avoid context crossover
+    if (currentChatId !== chatId) {
+      try {
+        await clearQAMemory();
+      } catch (err) {
+        console.error('Error clearing QA memory while switching chats:', err);
+        // Continue anyway, it's not critical
+      }
+    }
+    
     setCurrentChatId(chatId);
   };
 
@@ -174,6 +201,8 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       if (currentChatId === chatId) {
         setCurrentChatId(null);
         setMessages([]);
+        // Clear QA memory since we deleted the current chat
+        await clearQAMemory();
       }
       return true;
     } catch (err) {

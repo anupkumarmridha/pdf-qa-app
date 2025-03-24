@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { FiArrowLeft, FiLoader, FiMessageSquare } from 'react-icons/fi';
+import { FiArrowLeft, FiLoader, FiMessageSquare, FiAlertCircle } from 'react-icons/fi';
 import DocumentSummary from '../components/DocumentSummary';
 import QuestionForm from '../components/QuestionForm';
 import ConversationHistory from '../components/ConversationHistory';
@@ -130,11 +130,13 @@ const DocumentPage = () => {
     setIsAsking(true);
     setQaError('');
     
-    // Add user message to conversation
-    await addUserMessage(questionText);
-    
     try {
-      const response = await askDocumentQuestion(id, questionText);
+      // Add user message to conversation first
+      await addUserMessage(questionText);
+      
+      // Now that we have a chat ID (either existing or newly created), we can ask the question
+      // Make sure to use the current chat ID that might have just been created
+      const response = await askDocumentQuestion(id, questionText, currentChatId);
       
       // Update current sources for the sidebar
       setCurrentSources(response.sources);
@@ -224,6 +226,13 @@ const DocumentPage = () => {
           </div>
         )}
         
+        {qaError && (
+          <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 animate-fade-in flex items-center">
+            <FiAlertCircle className="h-5 w-5 mr-2" />
+            <p>{qaError}</p>
+          </div>
+        )}
+        
         {/* Conversation section */}
         {hasConversation ? (
           <>
@@ -259,12 +268,6 @@ const DocumentPage = () => {
             </div>
           </div>
         )}
-        
-        {qaError && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 animate-fade-in">
-            <p>{qaError}</p>
-          </div>
-        )}
       </div>
     );
   };
@@ -297,6 +300,6 @@ const DocumentPage = () => {
       </div>
     </div>
   );
-}
+};
 
 export default DocumentPage;

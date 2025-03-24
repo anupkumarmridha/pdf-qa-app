@@ -71,10 +71,11 @@ const QAPage = () => {
     setQaError('');
     
     // Add user message to conversation using MongoDB API
-    const userMessage = await addUserMessage(questionText);
+    await addUserMessage(questionText);
     
     try {
-      const response = await askQuestion(questionText);
+      // Pass the current chat ID to maintain conversation context
+      const response = await askQuestion(questionText, currentChatId);
       
       // Update the current sources for the sidebar
       setCurrentSources(response.sources);
