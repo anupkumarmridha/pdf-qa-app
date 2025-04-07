@@ -1,36 +1,28 @@
 import api from './api';
 
-/**
- * Ask a question about all uploaded documents
- * 
- * @param {string} question - The question to ask
- * @param {string} chatId - Optional chat ID for conversation context
- * @returns {Promise<Object>} - Answer and source documents
- */
-export const askQuestion = async (question, chatId = null) => {
+export const askQuestion = async (question, chatId = null, isRegeneration = false) => {
   try {
-    return await api.post('/qa/ask', { 
+    const params = { 
       question,
-      chat_id: chatId 
-    });
+      chat_id: chatId,
+      is_regeneration: isRegeneration
+    };
+    
+    return await api.post('/qa/ask', params);
   } catch (error) {
     console.error('Error asking question:', error);
     throw error;
   }
 };
 
-/**
- * Ask a question about a specific document
- * 
- * @param {string} documentId - ID of the document to query
- * @param {string} question - The question to ask
- * @param {string} chatId - Optional chat ID for conversation context
- * @returns {Promise<Object>} - Answer and source documents
- */
-export const askDocumentQuestion = async (documentId, question, chatId = null) => {
+
+export const askDocumentQuestion = async (documentId, question, chatId = null, isRegeneration = false) => {
   try {
-    // Now using query parameters for GET request with chat_id
-    const params = { question };
+    const params = { 
+      question,
+      is_regeneration: isRegeneration
+    };
+    
     if (chatId) {
       params.chat_id = chatId;
     }
@@ -42,12 +34,6 @@ export const askDocumentQuestion = async (documentId, question, chatId = null) =
   }
 };
 
-/**
- * Clear the QA service's conversation memory
- * Useful when starting a new conversation without reloading the app
- * 
- * @returns {Promise<Object>} - Success message
- */
 export const clearQAMemory = async () => {
   try {
     return await api.post('/qa/clear-memory');

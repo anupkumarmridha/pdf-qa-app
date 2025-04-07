@@ -8,6 +8,7 @@ export interface Message {
   content: string;
   timestamp: Date;
   sources?: any[];
+  updated_at?: Date;
 }
 
 /**
@@ -22,6 +23,8 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
   const [isLoading, setIsLoading] = useState(false);
   // Error state
   const [error, setError] = useState<string | null>(null);
+  // Track the last user message ID for editing
+  const [lastUserMessageId, setLastUserMessageId] = useState<string | null>(null);
 
   // Load messages when chat ID changes
   useEffect(() => {
@@ -38,6 +41,18 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       setCurrentChatId(chatId);
     }
   }, [chatId]);
+
+  // Track the last user message ID
+  useEffect(() => {
+    if (messages.length > 0) {
+      const userMessages = messages.filter(msg => msg.role === 'user');
+      if (userMessages.length > 0) {
+        setLastUserMessageId(userMessages[userMessages.length - 1].id);
+      }
+    } else {
+      setLastUserMessageId(null);
+    }
+  }, [messages]);
 
   /**
    * Load messages for a specific chat
@@ -84,6 +99,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       
       // Update local state
       setMessages(prev => [...prev, message]);
+      setLastUserMessageId(message.id);
       
       // Return both the message and the chat ID that was used
       return { message, chatId: chatIdToUse };
@@ -148,8 +164,39 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
         timestamp: new Date(),
         sources
       };
-      setMessages(prev => [...prev, tempMessage]);
+      setMessages(prev => [...prev, message => message.role === 'assistant' ? tempMessage : message]);
       return { message: tempMessage, chatId: currentChatId };
+    }
+  };
+
+  /**
+   * Update an existing user message
+   */
+  const updateUserMessage = async (messageId: string, content: string) => {
+    setError(null);
+    
+    try {
+      if (!currentChatId) {
+        throw new Error('No active chat to update message');
+      }
+      
+      // Call API to update message
+      const updatedMessage = await chatService.updateMessage(currentChatId, messageId, content);
+      
+      // Update local state
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId ? updatedMessage : msg
+      ));
+      
+      return updatedMessage;
+    } catch (err) {
+      console.error('Error updating user message:', err);
+      setError('Failed to update message');
+      
+      // Update the UI state directly
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId ? { ...msg, content } : msg
+      ));
     }
   };
 
@@ -182,6 +229,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       
       // Update local state with both messages
       setMessages(prev => [...prev, userMessage, assistantMessage]);
+      setLastUserMessageId(userMessage.id);
       
       return { userMessage, assistantMessage, chatId: chatIdToUse };
     } catch (err) {
@@ -227,6 +275,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       if (currentChatId) {
         await chatService.clearMessages(currentChatId);
         setMessages([]);
+        setLastUserMessageId(null);
       }
     } catch (err) {
       console.error('Error clearing conversation:', err);
@@ -273,6 +322,7 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
       if (currentChatId === chatId) {
         setCurrentChatId(null);
         setMessages([]);
+        setLastUserMessageId(null);
         // Clear QA memory since we deleted the current chat
         await clearQAMemory();
       }
@@ -284,17 +334,91 @@ export const useConversation = (documentId?: string | null, chatId?: string | nu
     }
   };
 
+  /**
+   * Regenerate the last assistant answer
+   */
+  const regenerateAnswer = async (content: string, sources: any[] = []) => {
+    setError(null);
+    
+    try {
+      if (!currentChatId || messages.length === 0) {
+        throw new Error("Cannot regenerate: no active conversation");
+      }
+      
+      // Find the last assistant message index
+      const lastAssistantIndex = [...messages].reverse().findIndex(msg => msg.role === 'assistant');
+      
+      if (lastAssistantIndex === -1) {
+        throw new Error("No assistant message to regenerate");
+      }
+      
+      // Get the actual message (adjusting for reverse index)
+      const assistantMessage = messages[messages.length - 1 - lastAssistantIndex];
+      
+      // Call API to update the message
+      const updatedMessage = await chatService.updateMessage(
+        currentChatId,
+        assistantMessage.id,
+        content,
+        sources
+      );
+      
+      // Update local state by replacing the message
+      setMessages(prev => prev.map(msg => 
+        msg.id === assistantMessage.id ? updatedMessage : msg
+      ));
+      
+      return updatedMessage;
+    } catch (err) {
+      console.error('Error regenerating answer:', err);
+      setError('Failed to regenerate answer');
+      
+      // Fall back to updating the UI state directly
+      setMessages(prev => {
+        const newMessages = [...prev];
+        const lastAssistantIndex = newMessages.map(m => m.role).lastIndexOf('assistant');
+        if (lastAssistantIndex !== -1) {
+          newMessages[lastAssistantIndex] = {
+            ...newMessages[lastAssistantIndex],
+            content,
+            sources,
+            updated_at: new Date()
+          };
+        }
+        return newMessages;
+      });
+    }
+  };
+
+  // Get the last question for retry purposes
+  const getLastQuestion = (): string => {
+    if (messages.length === 0) return '';
+    
+    // Find the last user message
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        return messages[i].content;
+      }
+    }
+    
+    return '';
+  };
+
   return {
     messages,
     addUserMessage,
     addAssistantMessage,
+    updateUserMessage,
+    regenerateAnswer,
     addCompleteExchange,
     clearConversation,
     loadChat,
     deleteChat,
     getChatsForDocument,
+    getLastQuestion,
     hasConversation: messages.length > 0,
     currentChatId,
+    lastUserMessageId,
     isLoading,
     error
   };

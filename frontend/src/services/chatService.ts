@@ -5,6 +5,7 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  updated_at?: Date;
   sources?: any[];
 }
 
@@ -140,6 +141,48 @@ export const addMessage = async (
 };
 
 /**
+ * Update a message
+ * 
+ * @param chatId - The ID of the chat
+ * @param messageId - The ID of the message to update
+ * @param content - The new content
+ * @param sources - Optional updated sources
+ * @returns The updated message
+ */
+export const updateMessage = async (
+  chatId: string,
+  messageId: string,
+  content: string,
+  sources?: any[]
+): Promise<Message> => {
+  try {
+    const payload: { content: string, sources?: any[] } = { content };
+    
+    // Only include sources if they're provided
+    if (sources) {
+      payload.sources = sources;
+    }
+    
+    const response = await api.put(`/chats/${chatId}/messages/${messageId}`, payload);
+    
+    // Ensure the response is properly formatted
+    const formattedMessage = formatMessage(response);
+    
+    // Make sure there's an updated_at property for UI indicators
+    if (!formattedMessage.updated_at && response.updated_at) {
+      formattedMessage.updated_at = new Date(response.updated_at);
+    } else if (!formattedMessage.updated_at) {
+      formattedMessage.updated_at = new Date();
+    }
+    
+    return formattedMessage;
+  } catch (error) {
+    console.error(`Error updating message in chat ${chatId}:`, error);
+    throw error;
+  }
+};
+
+/**
  * Get all messages for a chat
  * 
  * @param chatId - The ID of the chat
@@ -187,5 +230,6 @@ const formatMessage = (message: any): Message => ({
   role: message.role,
   content: message.content,
   timestamp: new Date(message.timestamp),
+  updated_at: message.updated_at ? new Date(message.updated_at) : undefined,
   sources: message.sources
 });

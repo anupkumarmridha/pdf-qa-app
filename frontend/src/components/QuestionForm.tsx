@@ -1,35 +1,56 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FiSend,FiCornerDownRight, FiChevronDown, FiChevronUp, FiHelpCircle, FiX, FiRefreshCw } from 'react-icons/fi';
+import { FiSend, FiCornerDownRight, FiChevronDown, FiChevronUp, FiHelpCircle, FiX, FiRefreshCw } from 'react-icons/fi';
 
 interface QuestionFormProps {
   onSubmit: (question: string) => void;
+  documentId?: string;
   isLoading?: boolean;
   disabled?: boolean;
   hasConversationHistory?: boolean;
   isFollowUpQuestion?: boolean;
   lastQuestion?: string;
   onRetry?: () => void;  
+  initialQuestion?: string;
+  isEditing?: boolean;
+  onCancelEdit?: () => void;
 }
 
 const QuestionForm: React.FC<QuestionFormProps> = ({ 
   onSubmit, 
+  documentId,
   isLoading = false, 
   disabled = false,
   isFollowUpQuestion = false,
   lastQuestion = '',
-  onRetry
-  
+  onRetry,
+  initialQuestion = '',
+  isEditing = false,
+  onCancelEdit
 }) => {
-  const [question, setQuestion] = useState('');
+  const [question, setQuestion] = useState(initialQuestion);
   const [error, setError] = useState('');
   const [charCount, setCharCount] = useState(0);
   const [isFocused, setIsFocused] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Update character count when question changes
   useEffect(() => {
-    setCharCount(question.length);
+    setCharCount(question?.length || 0);
   }, [question]);
+
+  // Initialize with initial question when provided
+  useEffect(() => {
+    if (initialQuestion) {
+      setQuestion(initialQuestion);
+      // Focus and place cursor at the end when editing
+      if (isEditing && textareaRef.current) {
+        const len = initialQuestion.length;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(len, len);
+      }
+    }
+  }, [initialQuestion, isEditing]);
 
   // Auto-resize textarea based on content
   useEffect(() => {
@@ -39,18 +60,22 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
     }
   }, [question]);
 
+  // Handle form submission
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!question.trim()) {
+    if (!question?.trim()) {
       setError('Please enter a question');
       return;
     }
 
     setError('');
-    console.log("Setting last question:", question);
     onSubmit(question);
-    setQuestion(''); // Clear the input after submission
+    
+    // Only clear the question if not in edit mode
+    if (!isEditing) {
+      setQuestion('');
+    }
     
     // Reset textarea height
     if (textareaRef.current) {
@@ -68,13 +93,16 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
+    } else if (isEditing && e.key === 'Escape' && onCancelEdit) {
+      e.preventDefault();
+      onCancelEdit();
     }
   };
 
   const handleFocus = () => setIsFocused(true);
   const handleBlur = () => setIsFocused(false);
 
-  // Example follow-up questions (shown when there's conversation history)
+  // Example questions
   const followUpExamples = [
     "Can you explain that in more detail?",
     "Why is that important?",
@@ -126,7 +154,7 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
       )}
       
       {/* Main form */}
-      <div className={`bg-white rounded-xl shadow-md border ${isFollowUpQuestion ? 'border-gray-200' : 'border-gray-300'} overflow-hidden transition-all duration-300`}>
+      <div className={`bg-white rounded-xl shadow-md border ${isEditing ? 'border-primary-300 ring-2 ring-primary-200' : isFollowUpQuestion ? 'border-gray-200' : 'border-gray-300'} overflow-hidden transition-all duration-300`}>
         <form onSubmit={handleSubmit} className="relative">
           <div className="flex items-end">
             <div className="relative flex-grow">
@@ -135,20 +163,20 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
                 id="question"
                 rows={1}
                 className={`w-full pl-4 pr-24 py-4 resize-none overflow-hidden border-0 focus:ring-0 focus:outline-none text-gray-700 placeholder-gray-400 ${isLoading || disabled ? 'bg-gray-50' : 'bg-white'}`}
-                placeholder={isFollowUpQuestion ? 
+                placeholder={isEditing ? "Edit your question..." : isFollowUpQuestion ? 
                   "Ask a follow-up question..." : 
                   "Ask a question about your document..."}
-                value={question}
+                value={question || ''}
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
-                disabled={isLoading || disabled}
+                disabled={isLoading || (disabled && !isEditing)}
                 style={{ minHeight: '56px' }}
               />
               
               {/* Character count */}
-              {question.length > 0 && (
+              {question && question.length > 0 && (
                 <div className="absolute right-20 bottom-4 text-xs text-gray-400">
                   {charCount} / 4000
                 </div>
@@ -157,16 +185,29 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
             
             {/* Actions toolbar */}
             <div className="flex items-center pr-2">
-              <button
-                type="button"
-                className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-                onClick={() => setShowSuggestions(!showSuggestions)}
-                title="Show suggestions"
-              >
-                {showSuggestions ? <FiChevronDown size={18} /> : <FiChevronUp size={18} />}
-              </button>
+              {!isEditing && (
+                <button
+                  type="button"
+                  className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  onClick={() => setShowSuggestions(!showSuggestions)}
+                  title={showSuggestions ? "Hide suggestions" : "Show suggestions"}
+                >
+                  {showSuggestions ? <FiChevronDown size={18} /> : <FiChevronUp size={18} />}
+                </button>
+              )}
               
-              {lastQuestion && (
+              {isEditing && onCancelEdit && (
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  className="p-2 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  title="Cancel editing"
+                >
+                  <FiX size={18} />
+                </button>
+              )}
+              
+              {!isEditing && lastQuestion && onRetry && (
                 <button
                   type="button"
                   onClick={onRetry}
@@ -176,7 +217,7 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
                       ? 'text-gray-300 cursor-not-allowed'
                       : 'text-orange-500 hover:text-orange-600 hover:bg-orange-50'
                   } transition-colors`}
-                  title="Retry last question"
+                  title="Regenerate response"
                 >
                   <FiRefreshCw size={18} />
                 </button>
@@ -184,15 +225,15 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
 
               <button
                 type="submit"
-                disabled={isLoading || disabled || !question.trim()}
+                disabled={(isLoading || disabled) && !isEditing || (!question?.trim())}
                 className={`p-2 rounded-full ml-1 ${
-                  isLoading || disabled || !question.trim()
+                  (isLoading || disabled) && !isEditing || (!question?.trim())
                     ? 'text-gray-300 cursor-not-allowed'
                     : 'text-primary-600 hover:text-primary-700 hover:bg-primary-50'
                 } transition-colors`}
-                title="Send message"
+                title={isEditing ? "Save changes" : "Send message"}
               >
-                {isLoading ? (
+                {isLoading && !isEditing ? (
                   <div className="w-5 h-5 relative">
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-600"></div>
                   </div>
@@ -213,17 +254,24 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
         )}
         
         {/* Helper text */}
-        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-500 flex items-center justify-between">
-          <span>
-            <span className="font-medium">Tip:</span> Press Enter to send, Shift+Enter for new line
-          </span>
-          {isFollowUpQuestion && (
-            <span className="flex items-center text-primary-600">
-              <FiCornerDownRight className="mr-1" size={12} />
-              Follow-up question
+        {!isEditing && (
+          <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+            <span>
+              <span className="font-medium">Tip:</span> Press Enter to send, Shift+Enter for new line
             </span>
-          )}
-        </div>
+            {isEditing ? (
+              <span className="flex items-center text-primary-600">
+                <FiCornerDownRight className="mr-1" size={12} />
+                Editing message
+              </span>
+            ) : isFollowUpQuestion && (
+              <span className="flex items-center text-primary-600">
+                <FiCornerDownRight className="mr-1" size={12} />
+                Follow-up question
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

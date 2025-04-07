@@ -8,10 +8,9 @@ import { getDocuments } from '../services/documentService';
 import { askQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
 import { FiAlertCircle, FiMessageSquare, FiFileText, FiDatabase, FiLoader } from 'react-icons/fi';
+import { handleRetry as retryHelper } from '../utils/helpers';
 
 const QAPage = () => {
-
-  const [lastQuestion, setLastQuestion] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const chatIdFromUrl = searchParams.get('chat');
   
@@ -25,15 +24,23 @@ const QAPage = () => {
   // Current sources shown in the sidebar
   const [currentSources, setCurrentSources] = useState([]);
   
+  // Editing state
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editingMessageContent, setEditingMessageContent] = useState('');
+  
   // Conversation state using our MongoDB API
   const {
     messages,
     addUserMessage,
     addAssistantMessage,
+    updateUserMessage,
+    regenerateAnswer,
     clearConversation,
     loadChat,
+    getLastQuestion,
     hasConversation,
     currentChatId,
+    lastUserMessageId,
     isLoading: isLoadingChat
   } = useConversation(null, chatIdFromUrl);
 
@@ -47,6 +54,12 @@ const QAPage = () => {
       setSearchParams({ chat: currentChatId });
     }
   }, [currentChatId, chatIdFromUrl, setSearchParams]);
+  
+  // Reset editing state when messages change
+  useEffect(() => {
+    setEditingMessageId(null);
+    setEditingMessageContent('');
+  }, [messages.length]);
 
   const fetchDocuments = async () => {
     setLoading(true);
@@ -63,49 +76,89 @@ const QAPage = () => {
     }
   };
 
-
-// Replace the existing handleQuestionSubmit function with this one:
-const handleQuestionSubmit = async (questionText:string) => {
-
-  setLastQuestion(questionText);
-  if (documents.length === 0) {
-    setQaError('You need to upload documents first before asking questions.');
-    return;
-  }
-  
-  setIsAsking(true);
-  setQaError('');
-  
-  try {
-    // Add user message and get the chat ID that was used
-    const { chatId } = await addUserMessage(questionText);
-    
-    // Pass the same chat ID to ensure the response goes to the same chat
-    const response = await askQuestion(questionText, chatId);
-    
-    // Update the current sources for the sidebar
-    setCurrentSources(response.sources);
-    
-    // Add assistant response to the same chat
-    await addAssistantMessage(response.answer, response.sources, chatId);
-  } catch (err) {
-    console.error('Error asking question:', err);
-    setQaError('Failed to get an answer. Please try again.');
-  } finally {
-    setIsAsking(false);
-  }
-};
-
-  const handleRetry = () => {
-    if (lastQuestion) {
-      handleQuestionSubmit(lastQuestion);
+  const handleQuestionSubmit = async (questionText) => {
+    // If in edit mode, handle edited message differently
+    if (editingMessageId) {
+      await handleMessageEdit(questionText);
+      return;
     }
-  }
+
+    if (documents.length === 0) {
+      setQaError('You need to upload documents first before asking questions.');
+      return;
+    }
+    
+    setIsAsking(true);
+    setQaError('');
+    
+    try {
+      const { chatId } = await addUserMessage(questionText);
+      const response = await askQuestion(questionText, chatId);
+      setCurrentSources(response.sources || []);
+      await addAssistantMessage(response.answer, response.sources || [], chatId);
+    } catch (err) {
+      console.error('Error asking question:', err);
+      setQaError('Failed to get an answer. Please try again.');
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    await retryHelper({
+      messages,
+      currentChatId,
+      setIsAsking,
+      setQaError,
+      setCurrentSources,
+      regenerateAnswer
+    });
+  };
+  
+  const handleEditMessage = (messageId, content) => {
+    setEditingMessageId(messageId);
+    setEditingMessageContent(content);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditingMessageContent('');
+  };
+
+  const handleMessageEdit = async (newContent) => {
+    try {
+      setIsAsking(true);
+      setQaError('');
+      
+      // First update the user message
+      await updateUserMessage(editingMessageId, newContent);
+      
+      // Then get a new answer based on the updated question
+      const response = await askQuestion(newContent, currentChatId, true);
+      
+      // Update the assistant's response
+      setCurrentSources(response.sources || []);
+      await regenerateAnswer(response.answer, response.sources || []);
+      
+      // Reset editing state
+      setEditingMessageId(null);
+      setEditingMessageContent('');
+    } catch (err) {
+      console.error('Error processing edited message:', err);
+      setQaError('Failed to update the response. Please try again.');
+    } finally {
+      setIsAsking(false);
+    }
+  };
   
   const handleNewChat = async () => {
     // Clear the conversation using MongoDB API
     await clearConversation();
     setCurrentSources([]);
+    
+    // Reset editing state
+    setEditingMessageId(null);
+    setEditingMessageContent('');
     
     // Remove chat ID from URL
     setSearchParams({});
@@ -114,6 +167,10 @@ const handleQuestionSubmit = async (questionText:string) => {
   const handleSelectChat = async (chatId) => {
     await loadChat(chatId);
     
+    // Reset editing state
+    setEditingMessageId(null);
+    setEditingMessageContent('');
+    
     // Update URL to include chat ID
     setSearchParams({ chat: chatId });
   };
@@ -121,9 +178,12 @@ const handleQuestionSubmit = async (questionText:string) => {
   // When the last message changes, update the sidebar sources
   useEffect(() => {
     if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage.role === 'assistant' && lastMessage.sources) {
-        setCurrentSources(lastMessage.sources);
+      // Find the last assistant message with sources
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant' && messages[i].sources && messages[i].sources.length > 0) {
+          setCurrentSources(messages[i].sources);
+          break;
+        }
       }
     }
   }, [messages]);
@@ -176,15 +236,22 @@ const handleQuestionSubmit = async (questionText:string) => {
           <>
             <ConversationHistory 
               messages={messages} 
-              onClearConversation={handleNewChat} 
+              onClearConversation={handleNewChat}
+              onEditMessage={handleEditMessage}
+              onRetryAnswer={handleRetry}
+              lastUserMessageId={lastUserMessageId}
             />
             <QuestionForm 
               onSubmit={handleQuestionSubmit} 
               isLoading={isAsking}
+              disabled={isAsking && !editingMessageId}
               hasConversationHistory={hasConversation}
-              isFollowUpQuestion={hasConversation}
-              lastQuestion={lastQuestion}
+              isFollowUpQuestion={hasConversation && !editingMessageId}
+              lastQuestion={getLastQuestion()}
               onRetry={handleRetry}
+              isEditing={!!editingMessageId}
+              initialQuestion={editingMessageContent}
+              onCancelEdit={handleCancelEdit}
             />
           </>
         ) : (

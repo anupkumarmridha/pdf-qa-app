@@ -13,6 +13,11 @@ class MessageCreate(BaseModel):
     content: str
     sources: Optional[List[Dict[str, Any]]] = None
 
+class MessageUpdateRequest(BaseModel):
+    """Model for updating an existing message."""
+    content: str
+    sources: Optional[List[Dict[str, Any]]] = None
+
 class MessageResponse(BaseModel):
     """Model for message response."""
     id: str
@@ -20,6 +25,7 @@ class MessageResponse(BaseModel):
     content: str
     timestamp: datetime
     sources: Optional[List[Dict[str, Any]]] = None
+    updated_at: Optional[datetime] = None
 
 class ChatCreate(BaseModel):
     """Model for creating a new chat."""
@@ -166,12 +172,72 @@ async def get_messages(chat_id: str):
         if not chat:
             raise HTTPException(status_code=404, detail="Chat not found")
         
-        messages = await Message.find({"chat_id": chat_id}).sort("+timestamp").to_list()
+        messages = await Message.find({"chat_id": chat_id}).sort("timestamp", 1).to_list()
         return messages
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve messages: {str(e)}")
+
+@router.put("/{chat_id}/messages/{message_id}", response_model=MessageResponse)
+async def update_message(
+    chat_id: str,
+    message_id: str,
+    message_update: MessageUpdateRequest
+):
+    """
+    Update an existing message in a chat.
+    Used for regenerating answers without creating new messages.
+    """
+    try:
+        # Find the message
+        message = await Message.get(message_id)
+        
+        if not message or str(message.chat_id) != chat_id:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        # Update data
+        update_data = {
+            "content": message_update.content,
+            "updated_at": datetime.utcnow()
+        }
+        
+        if message_update.sources is not None:
+            update_data["sources"] = message_update.sources
+        
+        # Update the message
+        await message.update({"$set": update_data})
+        
+        # Get updated message
+        updated_message = await Message.get(message_id)
+        
+        # Update chat preview if it's an assistant message
+        if updated_message.role == "assistant":
+            preview = updated_message.content
+            if len(preview) > 100:
+                preview = preview[:97] + "..."
+            
+            chat = await Chat.get(chat_id)
+            await chat.update({
+                "$set": {
+                    "updated_at": datetime.utcnow(),
+                    "preview": preview
+                }
+            })
+        
+        return MessageResponse(
+            id=str(updated_message.id),
+            role=updated_message.role,
+            content=updated_message.content,
+            timestamp=updated_message.timestamp,
+            sources=updated_message.sources,
+            updated_at=updated_message.updated_at
+        )
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating message: {str(e)}")
 
 @router.delete("/{chat_id}/messages")
 async def clear_messages(chat_id: str):

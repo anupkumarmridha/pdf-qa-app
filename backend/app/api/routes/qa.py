@@ -15,6 +15,7 @@ class QuestionWithChatRequest(BaseModel):
     """Model for question request with optional chat ID."""
     question: str
     chat_id: Optional[str] = None
+    is_regeneration: Optional[bool] = False
 
 @router.post("/ask", response_model=AnswerResponse)
 async def ask_question(question_request: QuestionWithChatRequest):

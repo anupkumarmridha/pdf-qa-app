@@ -17,6 +17,7 @@ class Message(Document):
     content: str = Field(...)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     sources: List[Dict[str, Any]] = Field(default_factory=list)
+    updated_at: Optional[datetime] = None
     
     class Settings:
         name = "messages"

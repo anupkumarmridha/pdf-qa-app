@@ -10,6 +10,8 @@ import { getDocument, checkDocumentStatus } from '../services/documentService';
 import { askDocumentQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
 
+import { handleRetry as retryHelper } from '../utils/helpers';
+
 const DocumentPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -18,25 +20,35 @@ const DocumentPage = () => {
   // Get chat ID from URL if present
   const chatIdFromUrl = searchParams.get('chat');
   
+  // Document state
   const [document, setDocument] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
+  // Question/Answer state
   const [isAsking, setIsAsking] = useState(false);
   const [qaError, setQaError] = useState('');
   
   // For displaying sources in the sidebar
   const [currentSources, setCurrentSources] = useState([]);
   
+  // Editing state
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editingMessageContent, setEditingMessageContent] = useState('');
+  
   // Conversation state - pass document ID and chat ID if we have one
   const {
     messages,
     addUserMessage,
     addAssistantMessage,
+    updateUserMessage,
+    regenerateAnswer,
     clearConversation,
     loadChat,
+    getLastQuestion,
     hasConversation,
     currentChatId,
+    lastUserMessageId,
     isLoading: isLoadingChat
   } = useConversation(id, chatIdFromUrl);
   
@@ -74,6 +86,12 @@ const DocumentPage = () => {
       }
     }
   }, [messages]);
+
+  // Reset editing state when messages change
+  useEffect(() => {
+    setEditingMessageId(null);
+    setEditingMessageContent('');
+  }, [messages.length]);
 
   const checkDocumentProcessingStatus = (doc) => {
     if (doc && doc.status === "processing") {
@@ -123,37 +141,88 @@ const DocumentPage = () => {
     }
   };
 
-const handleQuestionSubmit = async (questionText) => {
-  // Don't allow questions if document is still processing
-  if (isProcessing) return;
-  
-  setIsAsking(true);
-  setQaError('');
-  
-  try {
-    // Add user message to conversation and get the chat ID that was used
-    const { chatId } = await addUserMessage(questionText);
+  const handleQuestionSubmit = async (questionText) => {
+    // Don't allow questions if document is still processing
+    if (isProcessing) return;
     
-    // Now use that specific chat ID when asking the question to maintain continuity
-    const response = await askDocumentQuestion(id, questionText, chatId);
+    // If in edit mode, handle edited message differently
+    if (editingMessageId) {
+      await handleMessageEdit(questionText);
+      return;
+    }
     
-    // Update current sources for the sidebar
-    setCurrentSources(response.sources);
+    setIsAsking(true);
+    setQaError('');
     
-    // Add assistant response to the SAME chat
-    await addAssistantMessage(response.answer, response.sources, chatId);
-  } catch (err) {
-    console.error('Error asking question:', err);
-    setQaError('Failed to get an answer. Please try again.');
-  } finally {
-    setIsAsking(false);
-  }
-};
+    try {
+      const { chatId } = await addUserMessage(questionText);
+      const response = await askDocumentQuestion(id, questionText, chatId);
+      setCurrentSources(response.sources || []);
+      await addAssistantMessage(response.answer, response.sources, chatId);
+    } catch (err) {
+      console.error('Error asking question:', err);
+      setQaError('Failed to get an answer. Please try again.');
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    await retryHelper({
+      messages,
+      currentChatId,
+      documentId: id,
+      setIsAsking,
+      setQaError,
+      setCurrentSources,
+      regenerateAnswer
+    });
+  };
+
+  const handleEditMessage = (messageId, content) => {
+    setEditingMessageId(messageId);
+    setEditingMessageContent(content);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditingMessageContent('');
+  };
+
+  const handleMessageEdit = async (newContent) => {
+    try {
+      setIsAsking(true);
+      setQaError('');
+      
+      // First update the user message
+      await updateUserMessage(editingMessageId, newContent);
+      
+      // Then get a new answer based on the updated question
+      const response = await askDocumentQuestion(id, newContent, currentChatId, true);
+      
+      // Update the assistant's response
+      setCurrentSources(response.sources || []);
+      await regenerateAnswer(response.answer, response.sources || []);
+      
+      // Reset editing state
+      setEditingMessageId(null);
+      setEditingMessageContent('');
+    } catch (err) {
+      console.error('Error processing edited message:', err);
+      setQaError('Failed to update the response. Please try again.');
+    } finally {
+      setIsAsking(false);
+    }
+  };
 
   const handleNewChat = async () => {
     // Clear conversation and reset sources
     await clearConversation();
     setCurrentSources([]);
+    
+    // Reset editing state
+    setEditingMessageId(null);
+    setEditingMessageContent('');
     
     // Remove chat ID from URL
     setSearchParams({});
@@ -161,6 +230,10 @@ const handleQuestionSubmit = async (questionText) => {
   
   const handleSelectChat = async (chatId) => {
     await loadChat(chatId);
+    
+    // Reset editing state
+    setEditingMessageId(null);
+    setEditingMessageContent('');
     
     // Reflect the chat ID in the URL
     setSearchParams({ chat: chatId });
@@ -237,15 +310,22 @@ const handleQuestionSubmit = async (questionText) => {
           <>
             <ConversationHistory 
               messages={messages} 
-              onClearConversation={handleNewChat} 
+              onClearConversation={handleNewChat}
+              onEditMessage={handleEditMessage}
+              onRetryAnswer={handleRetry}
+              lastUserMessageId={lastUserMessageId}
             />
             <QuestionForm 
               onSubmit={handleQuestionSubmit} 
-              documentId={id}
               isLoading={isAsking}
-              disabled={isProcessing}
+              disabled={isProcessing && !editingMessageId}
               hasConversationHistory={hasConversation}
-              isFollowUpQuestion={hasConversation}
+              isFollowUpQuestion={hasConversation && !editingMessageId}
+              lastQuestion={getLastQuestion()}
+              onRetry={handleRetry}
+              isEditing={!!editingMessageId}
+              initialQuestion={editingMessageContent}
+              onCancelEdit={handleCancelEdit}
             />
           </>
         ) : (
@@ -260,7 +340,6 @@ const handleQuestionSubmit = async (questionText) => {
               </p>
               <QuestionForm 
                 onSubmit={handleQuestionSubmit} 
-                documentId={id}
                 isLoading={isAsking}
                 disabled={isProcessing}
               />
