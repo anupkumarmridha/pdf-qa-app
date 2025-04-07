@@ -10,6 +10,8 @@ import { useConversation } from '../services/conversationService';
 import { FiAlertCircle, FiMessageSquare, FiFileText, FiDatabase, FiLoader } from 'react-icons/fi';
 
 const QAPage = () => {
+
+  const [lastQuestion, setLastQuestion] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const chatIdFromUrl = searchParams.get('chat');
   
@@ -63,7 +65,9 @@ const QAPage = () => {
 
 
 // Replace the existing handleQuestionSubmit function with this one:
-const handleQuestionSubmit = async (questionText) => {
+const handleQuestionSubmit = async (questionText:string) => {
+
+  setLastQuestion(questionText);
   if (documents.length === 0) {
     setQaError('You need to upload documents first before asking questions.');
     return;
@@ -91,6 +95,12 @@ const handleQuestionSubmit = async (questionText) => {
     setIsAsking(false);
   }
 };
+
+  const handleRetry = () => {
+    if (lastQuestion) {
+      handleQuestionSubmit(lastQuestion);
+    }
+  }
   
   const handleNewChat = async () => {
     // Clear the conversation using MongoDB API
@@ -173,6 +183,8 @@ const handleQuestionSubmit = async (questionText) => {
               isLoading={isAsking}
               hasConversationHistory={hasConversation}
               isFollowUpQuestion={hasConversation}
+              lastQuestion={lastQuestion}
+              onRetry={handleRetry}
             />
           </>
         ) : (

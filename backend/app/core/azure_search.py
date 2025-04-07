@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from typing import List, Dict, Any, Optional
-
+from azure.core.exceptions import ResourceNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
@@ -137,13 +137,15 @@ class AzureSearchService:
     def _ensure_index_exists(self) -> None:
         try:
             self.index_client.get_index(self.index_name)
-            logger.info(f"Index '{self.index_name}' already exists. Deleting and recreating...")
-            self.index_client.delete_index(self.index_name)
+            logger.info(f"Index '{self.index_name}' already exists.")
+        except ResourceNotFoundError:
+            logger.warning(f"Index '{self.index_name}' not found. Creating a new one...")
+            index_definition = self._get_index_definition()
+            self.index_client.create_index(index_definition)
+            logger.info(f"Successfully created index '{self.index_name}'.")
         except Exception as e:
-            logger.info(f"Creating index '{self.index_name}' due to: {e}")
-        index_definition = self._get_index_definition()
-        self.index_client.create_index(index_definition)
-        logger.info(f"Successfully created index '{self.index_name}'.")
+            logger.error(f"Failed to check or create index '{self.index_name}': {e}")
+            raise
         
     async def upload_chunks(self, chunks: List[Dict[str, Any]]) -> None:
         """Upload document chunks to Azure AI Search with computed embeddings."""
@@ -223,6 +225,7 @@ class AzureSearchService:
             logger.error(f"Vector search failed: {e}")
             raise
 
+        
     def create_langchain_retriever(self, top_k: int = 5, document_id: str = None) -> AzureAISearchRetriever:
         filter_str = f"{self.schema_config.document_id_field} eq '{document_id}'" if document_id else None
         retriever = AzureAISearchRetriever(

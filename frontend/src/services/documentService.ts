@@ -1,5 +1,4 @@
 import api from './api';
-import axios from 'axios';
 
 /**
  * Upload multiple document files (PDF or CSV)
@@ -16,14 +15,12 @@ export const uploadDocuments = async (formData, progressCallback = null) => {
       }
     };
     
-    // Add progress tracking if callback provided
     if (progressCallback) {
       config.onUploadProgress = progressCallback;
     }
     
-    // Use axios directly for this call to handle multipart form data
-    const response = await axios.post('/api/documents/upload', formData, config);
-    return response.data;
+    // Use api service instead of axios directly
+    return await api.post('/documents/upload', formData, config);
   } catch (error) {
     console.error('Error uploading documents:', error);
     throw error;
@@ -100,11 +97,13 @@ export const deleteDocument = async (documentId) => {
  * Get a summary of a document
  * 
  * @param {string} documentId - ID of the document to summarize
- * @returns {Promise<Object>} - Document summary
+ * @returns {Promise<{summary: string}>} - Document summary
  */
 export const getDocumentSummary = async (documentId) => {
   try {
-    return await api.get(`/documents/${documentId}/summary`);
+    const response = await api.get(`/documents/${documentId}/summary`);
+    // Return the summary data from the response
+    return response.data;
   } catch (error) {
     console.error(`Error getting summary for document ${documentId}:`, error);
     throw error;

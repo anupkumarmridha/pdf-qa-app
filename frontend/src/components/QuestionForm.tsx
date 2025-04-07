@@ -1,22 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FiSend, FiMessageSquare, FiCornerDownRight, FiChevronDown, FiChevronUp, FiPaperclip, FiHelpCircle, FiX } from 'react-icons/fi';
+import { FiSend,FiCornerDownRight, FiChevronDown, FiChevronUp, FiHelpCircle, FiX, FiRefreshCw } from 'react-icons/fi';
 
 interface QuestionFormProps {
   onSubmit: (question: string) => void;
-  documentId?: string | null;
   isLoading?: boolean;
   disabled?: boolean;
   hasConversationHistory?: boolean;
   isFollowUpQuestion?: boolean;
+  lastQuestion?: string;
+  onRetry?: () => void;  
 }
 
 const QuestionForm: React.FC<QuestionFormProps> = ({ 
   onSubmit, 
-  documentId = null, 
   isLoading = false, 
   disabled = false,
-  hasConversationHistory = false,
-  isFollowUpQuestion = false
+  isFollowUpQuestion = false,
+  lastQuestion = '',
+  onRetry
+  
 }) => {
   const [question, setQuestion] = useState('');
   const [error, setError] = useState('');
@@ -46,6 +48,7 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
     }
 
     setError('');
+    console.log("Setting last question:", question);
     onSubmit(question);
     setQuestion(''); // Clear the input after submission
     
@@ -163,6 +166,22 @@ const QuestionForm: React.FC<QuestionFormProps> = ({
                 {showSuggestions ? <FiChevronDown size={18} /> : <FiChevronUp size={18} />}
               </button>
               
+              {lastQuestion && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  disabled={isLoading || disabled}
+                  className={`p-2 rounded-full ml-1 ${
+                    isLoading || disabled
+                      ? 'text-gray-300 cursor-not-allowed'
+                      : 'text-orange-500 hover:text-orange-600 hover:bg-orange-50'
+                  } transition-colors`}
+                  title="Retry last question"
+                >
+                  <FiRefreshCw size={18} />
+                </button>
+              )}
+
               <button
                 type="submit"
                 disabled={isLoading || disabled || !question.trim()}

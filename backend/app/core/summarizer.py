@@ -1,212 +1,150 @@
+import operator
 import logging
-from typing import List, Dict, Any
-from langchain_openai import AzureChatOpenAI
-from langchain.chains.summarize import load_summarize_chain
-from langchain.prompts import PromptTemplate
-from langchain.docstore.document import Document as LangchainDocument
-from app.config import settings
+from typing import Annotated, List, Literal, TypedDict, Any
+
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
+from langchain_core.language_models import BaseChatModel
+from langchain.chains.combine_documents.reduce import (
+    acollapse_docs,
+    split_list_of_docs,
+)
+from langgraph.graph import END, START, StateGraph
+from langgraph.constants import Send
 
 logger = logging.getLogger(__name__)
 
-class DocumentSummarizer:
-    """Class for generating summaries of documents."""
+class MapReduceSummarizer:
+    """
+    Document summarizer using LangGraph's map-reduce pattern.
     
-    def __init__(self):
-        # Initialize the language model
-        self.llm = AzureChatOpenAI(
-            azure_deployment=settings.AZURE_OPENAI_CHAT_DEPLOYMENT,
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-        )
-        
-        # Set up the summary chain
-        self.summary_chain = self._setup_summary_chain()
+    Uses Azure OpenAI to generate summaries in a hierarchical fashion,
+    allowing for summarization of documents of any length.
+    """
     
-    def _setup_summary_chain(self):
+    def __init__(self, llm: BaseChatModel, token_max: int = 4000):
         """
-        Set up the summarization chain with custom prompts.
-        
-        Returns:
-            LangChain summarization chain
-        """
-        # Define prompt for the summarization chain
-        map_prompt_template = """
-        You are a helpful AI assistant tasked with summarizing documents.
-        
-        CHUNK OF TEXT TO SUMMARIZE:
-        {text}
-        
-        INSTRUCTIONS:
-        1. Identify the key points and information in this text chunk.
-        2. Create a concise summary of this specific chunk only.
-        3. Focus on extracting factual information rather than opinions.
-        4. If the chunk contains data, tables, or statistics, be sure to include them.
-        5. Write in a clear, factual tone.
-        
-        SUMMARY OF THIS CHUNK:
-        """
-        
-        map_prompt = PromptTemplate(
-            template=map_prompt_template,
-            input_variables=["text"]
-        )
-        
-        combine_prompt_template = """
-        You are a helpful AI assistant tasked with creating a comprehensive document summary.
-        
-        INDIVIDUAL CHUNK SUMMARIES:
-        {text}
-        
-        INSTRUCTIONS:
-        1. Combine the above chunk summaries into one coherent document summary.
-        2. Organize the information logically, with the most important points first.
-        3. Eliminate redundancies while preserving all important information.
-        4. Structure the summary with appropriate headings if the document has clear sections.
-        5. If the document is a PDF, include information about its structure and content.
-        6. If the document is a CSV, include information about the data structure, key columns, and findings.
-        7. Keep the summary concise yet comprehensive.
-        
-        COMPREHENSIVE DOCUMENT SUMMARY:
-        """
-        
-        combine_prompt = PromptTemplate(
-            template=combine_prompt_template,
-            input_variables=["text"]
-        )
-        
-        # Create the summary chain
-        chain = load_summarize_chain(
-            llm=self.llm,
-            chain_type="map_reduce",
-            map_prompt=map_prompt,
-            combine_prompt=combine_prompt,
-            verbose=True
-        )
-        
-        return chain
-    
-    def generate_summary(self, chunks: List[Dict[str, Any]], metadata: Dict[str, Any]) -> str:
-        """
-        Generate a summary of a document based on its content chunks.
+        Initialize the summarizer.
         
         Args:
-            chunks: List of text chunks from the document
-            metadata: Document metadata
+            llm: The language model to use for summarization
+            token_max: Maximum tokens for each summarization step
+        """
+        self.llm = llm
+        self.token_max = token_max
+        
+        # Define map and reduce prompts
+        map_prompt = ChatPromptTemplate.from_messages([
+            ("human", "Write a concise summary of the following:\n\n{context}")
+        ])
+        self.map_chain = map_prompt | self.llm | StrOutputParser()
+        
+        reduce_template = """
+        The following is a set of summaries:
+        {docs}
+        Take these and distill it into a final, consolidated summary 
+        of the main themes.
+        """
+        reduce_prompt = ChatPromptTemplate.from_messages([
+            ("human", reduce_template)
+        ])
+        self.reduce_chain = reduce_prompt | self.llm | StrOutputParser()
+    
+    def _length_function(self, documents: List[Document]) -> int:
+        """Get number of tokens for input contents."""
+        return sum(len(doc.page_content.split()) * 1.3 for doc in documents)  # Rough token estimate
+    
+    async def generate_summary(self, documents: List[Document]) -> str:
+        """
+        Generate a summary for a list of documents.
+        
+        Args:
+            documents: List of Document objects to summarize
             
         Returns:
-            Document summary
+            A summarized string
         """
+        if not documents:
+            return "No documents provided for summarization."
+        
+        # Set up the graph states
+        class OverallState(TypedDict):
+            contents: List[str]
+            summaries: Annotated[list, operator.add]
+            collapsed_summaries: List[Document]
+            final_summary: str
+            
+        class SummaryState(TypedDict):
+            content: str
+        
+        # Graph node functions
+        async def generate_chunk_summary(state: SummaryState):
+            response = await self.map_chain.ainvoke({"context": state["content"]})
+            return {"summaries": [response]}
+            
+        def map_summaries(state: OverallState):
+            return [
+                Send("generate_chunk_summary", {"content": content}) 
+                for content in state["contents"]
+            ]
+            
+        def collect_summaries(state: OverallState):
+            return {
+                "collapsed_summaries": [Document(page_content=summary) for summary in state["summaries"]]
+            }
+            
+        async def collapse_summaries(state: OverallState):
+            doc_lists = split_list_of_docs(
+                state["collapsed_summaries"], self._length_function, self.token_max
+            )
+            results = []
+            for doc_list in doc_lists:
+                content = "\n".join([doc.page_content for doc in doc_list])
+                result = await self.reduce_chain.ainvoke({"docs": content})
+                results.append(Document(page_content=result))
+            return {"collapsed_summaries": results}
+            
+        def should_collapse(state: OverallState) -> Literal["collapse_summaries", "generate_final_summary"]:
+            num_tokens = self._length_function(state["collapsed_summaries"])
+            if num_tokens > self.token_max:
+                return "collapse_summaries"
+            else:
+                return "generate_final_summary"
+            
+        async def generate_final_summary(state: OverallState):
+            content = "\n".join([doc.page_content for doc in state["collapsed_summaries"]])
+            response = await self.reduce_chain.ainvoke({"docs": content})
+            return {"final_summary": response}
+        
         try:
-            logger.info(f"Generating summary for document {metadata.get('id', 'unknown')}")
+            # Build the graph
+            graph = StateGraph(OverallState)
+            graph.add_node("generate_chunk_summary", generate_chunk_summary)
+            graph.add_node("collect_summaries", collect_summaries)
+            graph.add_node("collapse_summaries", collapse_summaries)
+            graph.add_node("generate_final_summary", generate_final_summary)
             
-            # Convert chunks to LangChain document format
-            langchain_docs = []
-            for chunk in chunks:
-                langchain_docs.append(
-                    LangchainDocument(
-                        page_content=chunk["text"],
-                        metadata=chunk["metadata"]
-                    )
-                )
+            # Add edges
+            graph.add_conditional_edges(START, map_summaries, ["generate_chunk_summary"])
+            graph.add_edge("generate_chunk_summary", "collect_summaries")
+            graph.add_conditional_edges("collect_summaries", should_collapse)
+            graph.add_conditional_edges("collapse_summaries", should_collapse)
+            graph.add_edge("generate_final_summary", END)
             
-            # Run the summarization chain
-            summary_result = self.summary_chain.run(langchain_docs)
+            app = graph.compile()
             
-            # Post-process the summary
-            summary = self._enhance_summary_with_metadata(summary_result, metadata)
+            # Run the graph
+            initial_state = {
+                "contents": [doc.page_content for doc in documents],
+                "summaries": [],
+                "collapsed_summaries": [],
+                "final_summary": ""
+            }
             
-            logger.info(f"Summary generated successfully for document {metadata.get('id', 'unknown')}")
-            
-            return summary
+            result = await app.ainvoke(initial_state, {"recursion_limit": 10})
+            return result["final_summary"]
             
         except Exception as e:
-            logger.error(f"Error generating summary: {str(e)}")
-            # Fallback to a basic summary based on metadata
-            return self._create_fallback_summary(metadata)
-    
-    def _enhance_summary_with_metadata(self, summary: str, metadata: Dict[str, Any]) -> str:
-        """
-        Enhance the generated summary with document metadata.
-        
-        Args:
-            summary: Generated summary text
-            metadata: Document metadata
-            
-        Returns:
-            Enhanced summary
-        """
-        # Ensure summary is a string
-        if not summary:
-            summary = ""
-        
-        # Add document type specific information
-        doc_type = metadata.get("type", "")
-        
-        if doc_type == "pdf":
-            title = metadata.get("title", "Untitled")
-            author = metadata.get("author", "Unknown")
-            pages = metadata.get("pages", "Unknown")
-            
-            # Add metadata information at the end
-            metadata_info = f"\n\nDocument Information:\n"
-            if title != "Untitled":
-                metadata_info += f"- Title: {title}\n"
-            if author != "Unknown":
-                metadata_info += f"- Author: {author}\n"
-            metadata_info += f"- Pages: {pages}\n"
-            metadata_info += f"- Document Type: PDF"
-            
-            return summary + metadata_info
-            
-        elif doc_type == "csv":
-            rows = metadata.get("rows", "Unknown")
-            columns = metadata.get("columns", [])
-            
-            # Add metadata information at the end
-            metadata_info = f"\n\nDocument Information:\n"
-            metadata_info += f"- Rows: {rows}\n"
-            metadata_info += f"- Columns: {', '.join(columns)}\n"
-            metadata_info += f"- Document Type: CSV"
-            
-            return summary + metadata_info
-            
-        return summary
-    
-    def _create_fallback_summary(self, metadata: Dict[str, Any]) -> str:
-        """
-        Create a basic fallback summary based on document metadata.
-        
-        Args:
-            metadata: Document metadata
-            
-        Returns:
-            Basic summary
-        """
-        doc_type = metadata.get("type", "")
-        
-        if doc_type == "pdf":
-            title = metadata.get("title", "Untitled")
-            author = metadata.get("author", "Unknown")
-            pages = metadata.get("pages", "Unknown")
-            
-            summary = f"This is a {pages}-page PDF document"
-            if title != "Untitled":
-                summary += f" titled '{title}'"
-            if author != "Unknown":
-                summary += f" by {author}"
-            summary += "."
-            
-        elif doc_type == "csv":
-            rows = metadata.get("rows", "Unknown")
-            columns = metadata.get("columns", [])
-            
-            summary = f"This is a CSV file with {rows} rows and {len(columns)} columns"
-            if columns:
-                summary += f": {', '.join(columns)}"
-            summary += "."
-            
-        else:
-            summary = f"This is a document of type '{doc_type}'."
-        
-        return summary + "\n\nA detailed summary could not be generated."
+            logger.error(f"Error generating summary: {e}")
+            return f"Could not generate summary due to an error: {str(e)}"

@@ -256,19 +256,44 @@ async def delete_document(document_id: str):
 @router.get("/{document_id}/summary")
 async def get_document_summary(document_id: str):
     """
-    Get or generate a summary for a document.
+    Get the basic metadata-based summary for a document.
+    This returns the quick summary generated during document upload.
     """
     if document_id not in documents_db:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Get existing summary or generate a new one
+    # Return the basic metadata summary that was generated during upload
     doc = documents_db[document_id]
-    if doc.get("summary"):
-        summary = doc["summary"]
-    else:
-        # Generate summary using QA service
-        summary = qa_service.generate_summary(document_id)
-        # Update document with new summary
-        documents_db[document_id]["summary"] = summary
+    summary = doc.get("summary", "No basic summary available")
     
     return {"document_id": document_id, "summary": summary}
+
+@router.get("/{document_id}/advanced-summary")
+async def get_advanced_document_summary(document_id: str):
+    """
+    Generate a comprehensive AI summary for a document using map-reduce summarization.
+    This always uses the LLM to create a detailed summary of the document content.
+    """
+    if document_id not in documents_db:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Check if document is ready
+    doc = documents_db[document_id]
+    if doc.get("status") != "ready":
+        return {
+            "document_id": document_id,
+            "summary": f"Document is still processing. Current status: {doc.get('status', 'unknown')}",
+            "is_processing": True
+        }
+    
+    try:
+        # Always generate a new summary using the QA service
+        summary = await qa_service.generate_summary(document_id)
+        return {"document_id": document_id, "summary": summary}
+    except Exception as e:
+        logger.error(f"Error generating advanced summary for {document_id}: {e}")
+        return {
+            "document_id": document_id, 
+            "summary": f"Could not generate advanced summary: {str(e)}",
+            "error": True
+        }
