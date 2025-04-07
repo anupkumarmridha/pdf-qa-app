@@ -9,6 +9,7 @@ import ChatSidebarLayout from '../components/ChatSidebarLayout';
 import { getDocument, checkDocumentStatus } from '../services/documentService';
 import { askDocumentQuestion } from '../services/qaService';
 import { useConversation } from '../services/conversationService';
+import * as chatService from '../services/chatService';
 
 import { handleRetry as retryHelper } from '../utils/helpers';
 
@@ -197,12 +198,41 @@ const DocumentPage = () => {
       // First update the user message
       await updateUserMessage(editingMessageId, newContent);
       
+      // Find the message index that follows the edited message
+      const editedMessageIndex = messages.findIndex(msg => msg.id === editingMessageId);
+      let assistantMessageId = null;
+      
+      // Get the next assistant message (that should be regenerated)
+      if (editedMessageIndex !== -1 && editedMessageIndex < messages.length - 1) {
+        const nextMessage = messages[editedMessageIndex + 1];
+        if (nextMessage.role === 'assistant') {
+          assistantMessageId = nextMessage.id;
+        }
+      }
+      
       // Then get a new answer based on the updated question
       const response = await askDocumentQuestion(id, newContent, currentChatId, true);
       
-      // Update the assistant's response
-      setCurrentSources(response.sources || []);
-      await regenerateAnswer(response.answer, response.sources || []);
+      // Update the assistant's response with the specific message ID
+      if (response && response.answer) {
+        setCurrentSources(response.sources || []);
+        
+        if (assistantMessageId) {
+          // Update the specific assistant message
+          await chatService.updateMessage(
+            currentChatId,
+            assistantMessageId,
+            response.answer,
+            response.sources
+          );
+          
+          // Refresh the messages to show the updated content
+          await loadChat(currentChatId);
+        } else {
+          // Fallback to the general regenerate method
+          await regenerateAnswer(response.answer, response.sources || []);
+        }
+      }
       
       // Reset editing state
       setEditingMessageId(null);
